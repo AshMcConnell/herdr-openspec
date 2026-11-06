@@ -52,21 +52,43 @@ function taskRows(text) {
 const showArchive = (c, self) => !self.busy || self.busy === c.name;
 
 // Sort modes the header button cycles through. "recent" keeps openspec list's
-// own order (last modified first); "done" floats the closest-to-finished up.
+// own order (last modified first); "done" floats the closest-to-finished up;
+// "state" groups the list under ✓ Complete / Nearly done / In progress /
+// Unstarted / No tasks headers. "nearly" = at most 2 tasks left.
 const SORTS = [
   { id: "recent", label: "recent" },
   { id: "name", label: "A–Z" },
   { id: "done", label: "% done" },
+  { id: "state", label: "state" },
 ];
 
+const STATES = [
+  { id: "complete", label: "✓ Complete", chip: "✓ complete", color: "done" },
+  { id: "nearly", label: "Nearly done", chip: null, color: "working" },
+  { id: "progress", label: "In progress", chip: null, color: "muted" },
+  { id: "unstarted", label: "Unstarted", chip: "unstarted", color: "muted" },
+  { id: "draft", label: "No tasks", chip: "no tasks", color: "dim" },
+];
+
+function stateOf(c) {
+  if (c.total > 0 && c.done >= c.total) return "complete";
+  if (c.total === 0) return "draft";
+  if (c.done === 0) return "unstarted";
+  if (c.total - c.done <= 2) return "nearly";
+  return "progress";
+}
+
 // The visible list: the filter (name substring, case-insensitive) applied,
-// then the chosen sort. openspec's order is already recent-first.
+// then the chosen sort. openspec's order is already recent-first; "state"
+// sorts by the order of STATES, keeping it inside each group.
 function visible(self) {
   const q = (self.filter || "").trim().toLowerCase();
   let rows = q ? self.changes.filter((c) => c.name.toLowerCase().includes(q)) : self.changes;
   if (self.sort === "name") rows = [...rows].sort((a, b) => a.name.localeCompare(b.name));
   else if (self.sort === "done") rows = [...rows].sort((a, b) =>
     (b.total ? b.done / b.total : -1) - (a.total ? a.done / a.total : -1) || b.total - a.total);
+  else if (self.sort === "state") rows = [...rows].sort((a, b) =>
+    STATES.findIndex((s) => s.id === stateOf(a)) - STATES.findIndex((s) => s.id === stateOf(b)));
   return rows;
 }
 
@@ -208,13 +230,19 @@ export default class OpenSpec extends View {
   row(c, t) {
     const open = this.open === c.name, complete = c.total > 0 && c.done >= c.total;
     const confirming = this.confirming === c.name && Date.now() < this.confirmUntil;
+    const state = stateOf(c), remaining = c.total - c.done;
+    const chip = (label, color) => div().px(5).rounded(4).border_1().border_color(t.border).text_size(10).text_color(color).flex_none().child(label);
+    const barColor = state === "complete" ? t.done : state === "nearly" ? t.working : t.accent;
     return v_flex().flex_none()
       .child(h_flex().id(`chg-${c.name}`).h(38).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
         .when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(c.name, cx))
         .child(div().flex_1().min_w(0).truncate().font_semibold().child(c.name))
         .when(c.total > 0, (e) => e.child(div().text_size(11).text_color(complete ? t.done : t.muted).child(`${c.done}/${c.total}`)))
-        .when(Boolean(c.status) && c.status !== "in-progress",
-          (e) => e.child(div().px(5).rounded(4).border_1().border_color(t.border).text_size(10).text_color(complete ? t.done : t.muted).child(c.status)))
+        .when(state === "complete", (e) => e.child(chip("✓ complete", t.done)))
+        .when(state === "nearly", (e) => e.child(chip(`${remaining} left`, t.working)))
+        .when(state === "unstarted", (e) => e.child(chip("unstarted", t.muted)))
+        .when(state === "draft", (e) => e.child(chip("no tasks", t.dim)))
+        .when(state === "progress" && Boolean(c.status) && c.status !== "in-progress", (e) => e.child(chip(c.status, t.muted)))
         .when(Boolean(ago(c.at)), (e) => e.child(div().w(64).text_right().text_size(11).text_color(t.dim).flex_none().truncate().child(ago(c.at))))
         .when(this.busy === c.name, (e) => e.child(svg("mods/workspace-chrome/spinner.svg").size(13).flex_none().text_color(t.dim).spin(900)))
         .when(showArchive(c, this), (e) => e.child(confirming
@@ -226,7 +254,7 @@ export default class OpenSpec extends View {
             .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.confirming = c.name; this.confirmUntil = Date.now() + 6000; cx.notify(); })
             .child(svg("mods/openspec/archive.svg").size(13)))))
       .when(c.total > 0, (e) => e.child(h_flex().h(3).mx(8).mt(3).mb(2).rounded(2).bg(t.raised).overflow_hidden()
-        .child(div().h_full().rounded(2).bg(complete ? t.done : t.accent).w(`${Math.round(100 * c.done / c.total)}%`))))
+        .child(div().h_full().rounded(2).bg(barColor).w(`${Math.round(100 * c.done / c.total)}%`))))
       .when(open, (e) => e.child(v_flex().flex_none().pl(16).pb(4)
         .when(this.tasks === null, (el) => el.child(div().px(8).py(3).text_size(11).text_color(t.dim).child("No tasks.md")))
         .when(Array.isArray(this.tasks), (el) => {
@@ -291,7 +319,14 @@ export default class OpenSpec extends View {
           })
           .child(`↕ ${SORTS.find((s) => s.id === this.sort)?.label ?? "recent"}`)))
       .child(v_flex().id("openspec-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(2)
-        .children(rows.map((c) => this.row(c, t)))
+        .children((this.sort === "state" ? (() => { let last = null; return rows.map((c) => {
+          const st = stateOf(c);
+          if (st === last) return this.row(c, t);
+          last = st;
+          const meta = STATES.find((s) => s.id === st), count = rows.filter((r) => stateOf(r) === st).length;
+          return [div().id(`os-group-${st}`).h(22).flex_none().flex().items_center().px(8).gap(6).truncate()
+            .text_size(10).font_semibold().text_color(t[meta.color]).child(meta.label).child(div().text_color(t.dim).child(String(count))), this.row(c, t)];
+        }); })() : rows.map((c) => this.row(c, t))).flat())
         .when(!rows.length, (e) => e.child(div().p(8).text_color(t.dim)
           .child(filtering && this.changes.length ? `No changes match “${this.filter.trim()}”`
             : this.error || (this.loading || !this.context ? "Loading changes…" : this.root ? "No active changes" : "No folder")))))

@@ -19,11 +19,16 @@ including spaces that live on another machine.
 - **Header**: the change count and the total tasks done, a refresh button, and
   a close button when it floats.
 - **Toolbar**: a filter box (matches change names, case-insensitive, `Esc` or
-  the × clears it) and a sort button that cycles **recent → A–Z → % done**.
-  The choice is remembered. Header totals follow the filtered set.
-- **One row per active change**: name, progress bar, `done/total` tasks, a
-  status chip when it isn't `in-progress` (OpenSpec's `✓ Complete` shows
-  green), and when the change was last touched. Rows sort most recent first,
+  the × clears it) and a sort button that cycles **recent → A–Z → % done →
+  state**. The choice is remembered. Header totals follow the filtered set.
+- **State, at a glance**: every row carries a chip — green `✓ complete`,
+  amber `N left` when at most 2 tasks remain, `unstarted` (has tasks, none
+  done), or `no tasks` (a proposal-only draft) — and the progress bar takes
+  the state's color. The **state** sort groups the list under
+  ✓ Complete / Nearly done / In progress / Unstarted / No tasks headers,
+  each with its count.
+- **One row per active change**: name, progress bar, `done/total` tasks,
+  and when the change was last touched. Rows sort most recent first,
   as `openspec list` does.
 - **Expanded**: the change's task list — ✓ for done, ○ for open, under its
   `tasks.md` section headings. Click again to fold it away.
@@ -120,6 +125,8 @@ typed input. Nothing goes to the network.
 - **Long task lines** truncate to the row; continuation lines of a wrapped
   task in `tasks.md` aren't shown, and lists past 120 tasks point at the file.
 - **The filter matches change names** — not task text or specs.
+- **"Nearly done" means at most 2 tasks remain** — a fixed threshold, not a
+  percentage; state chips and the state grouping use it.
 
 ## License
 

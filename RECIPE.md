@@ -1,17 +1,21 @@
 # OpenSpec
 
 A live list of the focused terminal's OpenSpec changes for the Herdr desktop
-app: one row per active change (name, progress bar, done/total tasks, a
-status chip when it isn't `in-progress`, and its age), newest first, with
-header totals. A toolbar under the header has a filter box (change-name
-substring; `Esc` or × clears it) and a sort button cycling recent → A–Z →
-% done (remembered in the panel's `localStorage` under `"sort"`); the header
-totals follow the filtered set. Clicking a row folds out the change's task
-list from its `tasks.md` (✓ done, ○ open, section headings). The box button
-on a row archives that change: first click turns it into a red "Archive?"
-chip, the second runs `openspec archive <name> --yes` and reports by toast.
-It reads the repository of the focused pane — else any pane with a folder in
-the active space, else the space's folder — running `openspec` there, on its
+app: one row per active change (name, progress bar, done/total tasks, and
+its age), newest first, with header totals. A toolbar under the header has a
+filter box (change-name substring; `Esc` or × clears it) and a sort button
+cycling recent → A–Z → % done → state (remembered in the panel's
+`localStorage` under `"sort"`); the header totals follow the filtered set.
+Each row carries a state chip — `✓ complete`, `N left` (at most 2 tasks
+remaining), `unstarted`, or `no tasks` (proposal-only) — and the progress
+bar takes the state's color; the **state** sort groups the list under
+✓ Complete / Nearly done / In progress / Unstarted / No tasks headers with
+counts. Clicking a row folds out the change's task list from its
+`tasks.md` (✓ done, ○ open, section headings). The box button on a row
+archives that change: first click turns it into a red "Archive?" chip, the
+second runs `openspec archive <name> --yes` and reports by toast. It reads
+the repository of the focused pane — else any pane with a folder in the
+active space, else the space's folder — running `openspec` there, on its
 machine for remote spaces.
 
 ![OpenSpec docked in the side panel](preview-panel.png)
