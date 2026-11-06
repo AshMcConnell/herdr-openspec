@@ -18,6 +18,9 @@ including spaces that live on another machine.
 
 - **Header**: the change count and the total tasks done, a refresh button, and
   a close button when it floats.
+- **Toolbar**: a filter box (matches change names, case-insensitive, `Esc` or
+  the × clears it) and a sort button that cycles **recent → A–Z → % done**.
+  The choice is remembered. Header totals follow the filtered set.
 - **One row per active change**: name, progress bar, `done/total` tasks, a
   status chip when it isn't `in-progress` (OpenSpec's `✓ Complete` shows
   green), and when the change was last touched. Rows sort most recent first,
@@ -116,6 +119,7 @@ typed input. Nothing goes to the network.
   folder watch is local-only).
 - **Long task lines** truncate to the row; continuation lines of a wrapped
   task in `tasks.md` aren't shown, and lists past 120 tasks point at the file.
+- **The filter matches change names** — not task text or specs.
 
 ## License
 

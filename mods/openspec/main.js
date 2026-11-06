@@ -8,7 +8,7 @@
 // https://github.com/AshMcConnell/herdr-openspec — MIT license.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, props, closeOverlay, notify } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
@@ -51,12 +51,39 @@ function taskRows(text) {
 // hidden while another archive is running.
 const showArchive = (c, self) => !self.busy || self.busy === c.name;
 
+// Sort modes the header button cycles through. "recent" keeps openspec list's
+// own order (last modified first); "done" floats the closest-to-finished up.
+const SORTS = [
+  { id: "recent", label: "recent" },
+  { id: "name", label: "A–Z" },
+  { id: "done", label: "% done" },
+];
+
+// The visible list: the filter (name substring, case-insensitive) applied,
+// then the chosen sort. openspec's order is already recent-first.
+function visible(self) {
+  const q = (self.filter || "").trim().toLowerCase();
+  let rows = q ? self.changes.filter((c) => c.name.toLowerCase().includes(q)) : self.changes;
+  if (self.sort === "name") rows = [...rows].sort((a, b) => a.name.localeCompare(b.name));
+  else if (self.sort === "done") rows = [...rows].sort((a, b) =>
+    (b.total ? b.done / b.total : -1) - (a.total ? a.done / a.total : -1) || b.total - a.total);
+  return rows;
+}
+
 export default class OpenSpec extends View {
   init(_props, cx) {
     this.changes = []; this.tasks = []; this.open = null;
     this.root = null; this.on = null; this.watched = null;
     this.error = null; this.loading = false;
     this.busy = null; this.confirming = null; this.confirmUntil = 0;
+    this.handle = cx.focus_handle();
+    this.sort = localStorage.getItem("sort") ?? "recent";
+    if (!SORTS.some((s) => s.id === this.sort)) this.sort = "recent";
+    this.filter = "";
+    this.input = InputState.new({ placeholder: "Filter by name" });
+    this.input.on("change", (_e, cx) => { this.filter = this.input.value(); cx.notify(); });
+    this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
+    this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
     this.refresh(cx);
     cx.timer.every(15000, (cx) => this.refresh(cx));
   }
@@ -211,17 +238,31 @@ export default class OpenSpec extends View {
         })));
   }
 
+  clearFilter(cx) {
+    this.filter = "";
+    this.input.set_value("");
+    this.typing = false;
+    this.handle.focus();
+    cx.notify();
+  }
+
   render(cx) {
     if (key() !== this.context) this.refresh(cx);
     const t = theme();
-    const done = this.changes.reduce((n, c) => n + c.done, 0), total = this.changes.reduce((n, c) => n + c.total, 0);
+    const rows = visible(this);
+    const done = rows.reduce((n, c) => n + c.done, 0), total = rows.reduce((n, c) => n + c.total, 0);
+    const filtering = Boolean((this.filter || "").trim());
     const where = this.root ? `${this.on ? `${this.on}: ` : ""}${this.root}` : null;
     return v_flex().id("openspec").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
+      .track_focus(this.handle)
+      .on_key_down((e, cx) => {
+        if (e.key === "escape" && this.typing) { this.clearFilter(cx); cx.stop_propagation(); }
+      })
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("OpenSpec"))
         .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted)
-          .child(`${this.changes.length} change${this.changes.length === 1 ? "" : "s"}`))
+          .child(filtering && this.changes.length ? `${rows.length}/${this.changes.length}` : `${rows.length} change${rows.length === 1 ? "" : "s"}`))
         .when(total > 0, (e) => e.child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted)
           .child(`${done}/${total} tasks`)))
         .child(div().flex_1())
@@ -231,10 +272,29 @@ export default class OpenSpec extends View {
           .hover((s) => s.bg(t.hover)).text_color(t.dim).text_size(13)
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => closeOverlay(props().overlay)).child("×"))))
+      .child(h_flex().h(30).flex_none().px(10).gap(6).items_center().border_b(1).border_color(t.border)
+        .child(div().id("openspec-filter").flex_1().min_w(0).h(24).px(8).flex().items_center().rounded(7)
+          .border_1().border_color(this.typing ? t.accent : t.border).cursor_text()
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .child(Input.new(this.input).h_full().text_size(12).text_color(t.foreground)))
+        .when(filtering, (e) => e.child(div().id("openspec-clear").size(22).flex_none().flex().items_center().justify_center().rounded(5)
+          .text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => this.clearFilter(cx)).child("×")))
+        .child(div().id("openspec-sort").h(24).px(8).flex_none().flex().items_center().rounded(7).border_1().border_color(t.border)
+          .text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => {
+            this.sort = SORTS[(SORTS.findIndex((s) => s.id === this.sort) + 1) % SORTS.length].id;
+            localStorage.setItem("sort", this.sort);
+            cx.notify();
+          })
+          .child(`↕ ${SORTS.find((s) => s.id === this.sort)?.label ?? "recent"}`)))
       .child(v_flex().id("openspec-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(2)
-        .children(this.changes.map((c) => this.row(c, t)))
-        .when(!this.changes.length, (e) => e.child(div().p(8).text_color(t.dim)
-          .child(this.error || (this.loading || !this.context ? "Loading changes…" : this.root ? "No active changes" : "No folder")))))
+        .children(rows.map((c) => this.row(c, t)))
+        .when(!rows.length, (e) => e.child(div().p(8).text_color(t.dim)
+          .child(filtering && this.changes.length ? `No changes match “${this.filter.trim()}”`
+            : this.error || (this.loading || !this.context ? "Loading changes…" : this.root ? "No active changes" : "No folder")))))
       .when(Boolean(where), (e) => e.child(h_flex().flex_none().h(26).px(12).items_center().border_t(1).border_color(t.border)
         .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(where))));
   }
