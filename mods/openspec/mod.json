@@ -1,1 +1,11 @@
-{ "place": "none", "title": "OpenSpec", "overlay": { "kind": "window", "key": "openspec", "keep": true, "width": 480, "height": 0.75 } }
+{
+  "place": "none",
+  "title": "OpenSpec",
+  "overlay": {
+    "kind": "window",
+    "key": "openspec",
+    "keep": true,
+    "width": 480,
+    "height": 0.75
+  }
+}
