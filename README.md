@@ -4,6 +4,8 @@ A live list of your [OpenSpec](https://github.com/Fission-AI/OpenSpec) changes
 for the [Herdr](https://herdr.dev) desktop app — what `openspec list` prints,
 but always current, in a panel beside your work. Written as a native Herdr
 mod: no web view, no server, just small JavaScript the app runs itself.
+This repository is itself managed with OpenSpec — see `openspec/specs/` for
+the mod's specified behaviour.
 
 ![OpenSpec docked in the side panel](preview-panel.png)
 
