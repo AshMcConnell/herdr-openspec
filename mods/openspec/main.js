@@ -177,11 +177,15 @@ function visible(self) {
 const MAX_MD_BLOCKS = 2000;
 
 // Heading text sizes on the 15px reading size. The theme leaves sizes to
-// Obsidian's defaults (1.8em down), which are tuned for a full editor window;
-// these gentler steps fit a pane while keeping the hierarchy obvious.
+// Obsidian's defaults, which are tuned for a full editor window. This ladder
+// is steeper than that: every step is at least 1px so the hierarchy reads at
+// a glance (an earlier 1–2px-per-step ladder rendered same-looking headers).
+// The pane's title (the change's name) takes MD_HEAD[0] too, so a body `#`
+// matches it — deliberate: `#` is rare in proposals and the title should
+// lead. h6 at 14px sits just under body size; its magenta does the rest.
 const MD_HEAD = [
-  { size: 22.5, lh: "30px" }, { size: 20.5, lh: "27px" }, { size: 18, lh: "24px" },
-  { size: 16.5, lh: "22px" }, { size: 15, lh: "24px" }, { size: 15, lh: "24px" },
+  { size: 24, lh: "32px" }, { size: 20, lh: "27px" }, { size: 17.5, lh: "24px" },
+  { size: 16, lh: "22px" }, { size: 15, lh: "21px" }, { size: 14, lh: "20px" },
 ];
 
 // proposal.md -> { blocks, truncated }. Blocks are {kind:"h",level,text},
@@ -291,8 +295,10 @@ const mdChunks = (s) => s.match(/\S+\s*|\s+/g) ?? [];
 const monoFont = () => (typeof settings()?.font === "string" && settings().font) || "JetBrains Mono";
 
 // Inline runs -> styled elements laid out inline inside a flex_wrap row. The
-// container supplies size/colour/line height; runs add their own.
-function mdRuns(tokens, key) {
+// container supplies colour and line height; runs add their own, and take
+// `size` explicitly — a heading's text_size must land on the words even if
+// the style failed to cascade, so the hierarchy can't silently flatten.
+function mdRuns(tokens, key, size) {
   const out = [];
   tokens.forEach((r, n) => {
     if (r.t === "code") {
@@ -300,16 +306,16 @@ function mdRuns(tokens, key) {
         .font_family(monoFont()).text_size(13).child(r.s || " "));
     } else if (r.t === "link") {
       if (/^https?:\/\//i.test(r.url ?? "")) {
-        out.push(div().flex_none().id(`os-md-link-${key}-${n}`).text_color(NIGHT_MD.link).underline()
+        out.push(div().flex_none().id(`os-md-link-${key}-${n}`).text_size(size).text_color(NIGHT_MD.link).underline()
           .cursor_pointer().hover((st) => st.text_color(NIGHT_MD.linkHover))
           .on_click((_e, cx) => cx.open_url(r.url)).child(r.s));
       } else { // a relative or non-http target: coloured, not clickable
-        out.push(div().flex_none().text_color(NIGHT_MD.link).underline().child(r.s));
+        out.push(div().flex_none().text_size(size).text_color(NIGHT_MD.link).underline().child(r.s));
       }
     } else {
       const bold = r.t === "bold", italic = r.t === "italic";
       out.push(...mdChunks(r.s).map((chunk) => {
-        const el = div().flex_none().child(chunk);
+        const el = div().flex_none().text_size(size).child(chunk);
         if (bold) el.font_bold().text_color(NIGHT_MD.bold);
         if (italic) el.italic().text_color(NIGHT_MD.italic);
         return el;
@@ -322,7 +328,7 @@ function mdRuns(tokens, key) {
 // A styled paragraph row: the words of every run flowing and wrapping inline.
 const mdPara = (text, key, size, lh) => h_flex().flex_wrap().items_baseline().flex_none()
   .text_size(size).line_height(lh).text_color(NIGHT.fg)
-  .children(mdRuns(mdInline(text), key));
+  .children(mdRuns(mdInline(text), key, size));
 
 // The whole document: the change's name as a title in the exact H1 style (a
 // kebab-case name, not a `#` line — the document below renders as-is either
@@ -333,7 +339,7 @@ function mdView(text, title) {
   const out = [];
   if (title) out.push(h_flex().flex_wrap().items_baseline().flex_none().text_size(MD_HEAD[0].size)
     .line_height(MD_HEAD[0].lh).text_color(NIGHT_MD.h[0]).font_bold()
-    .children(mdRuns(mdInline(title), "mdtitle")));
+    .children(mdRuns(mdInline(title), "mdtitle", MD_HEAD[0].size)));
   blocks.forEach((b, i) => {
     const key = `md${i}`;
     if (b.kind === "h") {
@@ -341,7 +347,7 @@ function mdView(text, title) {
       out.push(h_flex().flex_wrap().items_baseline().flex_none().text_size(head.size)
         .line_height(head.lh).text_color(NIGHT_MD.h[b.level - 1]).font_bold()
         .when(i > 0, (e) => e.mt(6))
-        .children(mdRuns(mdInline(b.text), key)));
+        .children(mdRuns(mdInline(b.text), key, head.size)));
     } else if (b.kind === "code") {
       const box = v_flex().flex_none().mt(2).rounded(6).bg(NIGHT_MD.codeBg)
         .border_1().border_color(NIGHT.border).overflow_hidden()
