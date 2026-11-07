@@ -34,7 +34,7 @@ The panel SHALL derive each change's state from its task counts: complete when i
 
 ### Requirement: State chips
 
-Each row SHALL carry a chip for its state: a green `✓ complete` when complete, `N left` (the remaining count) when nearly done, `unstarted` when unstarted, and `no tasks` when the change has none. An in-progress change SHALL show the CLI's own status as the chip only when it has one and it is not literally "in-progress"; otherwise no chip.
+Each row SHALL carry a chip for its state: a green `✓ complete` when complete, an accent-coloured `N left` (the remaining count) when nearly done, `unstarted` when unstarted, and `no tasks` when the change has none. An in-progress change SHALL show the CLI's own status as the chip only when it has one and it is not literally "in-progress"; otherwise no chip.
 
 #### Scenario: Chips per state
 
@@ -53,12 +53,12 @@ Each row SHALL carry a chip for its state: a green `✓ complete` when complete,
 
 ### Requirement: Progress bar colour
 
-The progress bar SHALL take the state's colour: the done colour when complete, the working colour when nearly done, and the accent colour otherwise. A change with no tasks SHALL show no bar at all.
+The progress bar SHALL take the state's colour: the done colour when complete, the accent colour when nearly done, and the working colour otherwise. A change with no tasks SHALL show no bar at all.
 
 #### Scenario: Colours follow state
 
 - **WHEN** complete, nearly done, and in-progress rows are shown
-- **THEN** their bars use the done, working, and accent colours respectively
+- **THEN** their bars use the done, accent, and working colours respectively
 
 ### Requirement: Complete reads green through
 
