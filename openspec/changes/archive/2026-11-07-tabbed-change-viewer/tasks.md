@@ -42,10 +42,10 @@
 - [x] 7.3 README.md — Live section: viewer watches the change's folder (remote 15 s poll); What it runs: `find` for the specs listing (local and remote)
 - [x] 7.4 README.md — Limits: remote ticks read-only, every click opens another pane, fixed palette
 - [x] 7.5 RECIPE.md — viewer bullet and menu name updated to match
-- [ ] 7.6 Archive-time note for this change: a MODIFIED delta cannot change a spec's Purpose, so when **this** change is archived, hand-rewrite the merged `proposal-viewer` Purpose to describe the tabbed viewer (last time it was hand-filled at archive time)
+- [x] 7.6 Archive-time note for this change: a MODIFIED delta cannot change a spec's Purpose, so when **this** change is archived, hand-rewrite the merged `proposal-viewer` Purpose to describe the tabbed viewer (last time it was hand-filled at archive time)
 
 ## 8. Checks (all must pass before reporting)
 - [x] 8.1 `node --check mods/openspec/main.js`; sync to `~/.config/herdr-app/mods/openspec/` and `herdr-app check mods/openspec` passes
 - [x] 8.2 `openspec validate tabbed-change-viewer --strict` passes; `openspec validate --specs --strict` passes
 - [x] 8.3 Live check (agent): `pane.split` a real change into the running app; tabs switch, tasks tick, an edit lands live; screenshot
-- [ ] 8.4 In-app (owner): right-click → **View change** opens the tabbed viewer in dark and light app themes; ticks from the tasks tab; the list keeps the app theme
+- [x] 8.4 In-app (owner): right-click → **View change** opens the tabbed viewer in dark and light app themes; ticks from the tasks tab; the list keeps the app theme

@@ -24,5 +24,5 @@
 - [x] 4.1 `node --check mods/openspec/main.js`
 - [x] 4.2 `openspec validate follow-terminal-and-green-complete --strict` and `openspec validate --specs --strict`
 - [x] 4.3 Sync `mods/openspec/main.js` to `~/.config/herdr-app/mods/openspec/main.js`, then `herdr-app check mods/openspec` and `herdr-app status` (no mod errors)
-- [ ] 4.4 In-app (owner): with the list reading herdr-openspec, click the panel and a viewer — the footer and rows stay on herdr-openspec; click another terminal — it switches; switch space with no terminal focused — it resolves afresh
-- [ ] 4.5 In-app (owner): a complete change's row, chip, bar and expanded tasks read obviously green (not the theme's blue `done`)
+- [x] 4.4 In-app (owner): with the list reading herdr-openspec, click the panel and a viewer — the footer and rows stay on herdr-openspec; click another terminal — it switches; switch space with no terminal focused — it resolves afresh
+- [x] 4.5 In-app (owner): a complete change's row, chip, bar and expanded tasks read obviously green (not the theme's blue `done`)

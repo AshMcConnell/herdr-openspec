@@ -64,9 +64,9 @@
 - [x] 9.1 `node --check mods/openspec/main.js`
 - [x] 9.2 Sync to `~/.config/herdr-app/mods/openspec/` and `herdr-app check mods/openspec` passes
 - [x] 9.3 `openspec validate switch-viewed-change --strict` and `openspec validate --specs --strict` pass
-- [ ] 9.4 Live (agent): open a viewer, click another row — the viewer switches and the task list folds out; **View change** on a third change switches it again — one viewer pane only; close the viewer and **View change** opens a fresh pane; a local artifact edit still lands live after a switch
-- [ ] 9.5 In-app (owner): two viewers open — only the newest switches; a viewer on a remote space switches too; restart after a switch returns the pane to the change its props name
-- [ ] 9.6 Archive-time note: archive `tabbed-change-viewer` **before** this change so its deltas do not overwrite the retargeting requirements; hand-rewrite the merged `proposal-viewer` Purpose to describe the tabbed, switchable viewer; then validate the merged `proposal-viewer`, `context-menu` and `task-tracking` specs
+- [x] 9.4 Live (agent): open a viewer, click another row — the viewer switches and the task list folds out; **View change** on a third change switches it again — one viewer pane only; close the viewer and **View change** opens a fresh pane; a local artifact edit still lands live after a switch
+- [x] 9.5 In-app (owner): two viewers open — only the newest switches; a viewer on a remote space switches too; restart after a switch returns the pane to the change its props name
+- [x] 9.6 Archive-time note: archive `tabbed-change-viewer` **before** this change so its deltas do not overwrite the retargeting requirements; hand-rewrite the merged `proposal-viewer` Purpose to describe the tabbed, switchable viewer; then validate the merged `proposal-viewer`, `context-menu` and `task-tracking` specs
 
 ## 10. Review fixes (subagent findings)
 
@@ -75,3 +75,6 @@
 - [x] 10.3 Per-target request slots (`openspec.view.<id>`, `openspec.open.<panel>`) and a token-keyed queue, so two panels cannot overwrite each other's requests
 - [x] 10.4 `closed` flags and try/catch around the `nextCommand` loops, so a reload wake or a raced close cannot kill retargeting or re-register a closed copy
 - [x] 10.5 Docs: scope the pane fallback to **View change** (row clicks never open a pane); the machine never changes on a switch
+- [x] 10.6 Consolidate request slots into `openspec.views` / `openspec.opens` maps, sweeping ids with no live viewer, so stale keys cannot accumulate
+- [x] 10.7 Withdraw a request when its window closes and ignore requests older than 700 ms, so an abandoned click cannot switch a viewer after the fallback pane
+- [x] 10.8 Final spec re-merge after the tabbed archive, with the cooldown, queue and withdrawal behaviour validated
