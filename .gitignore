@@ -1,1 +1,5 @@
 .DS_Store
+
+# Written by gpui-shell on every run from the live runtime, so a committed copy
+# would only ever be the stale one. Its header says to ignore it.
+mods/openspec/gpui-kit.d.ts
