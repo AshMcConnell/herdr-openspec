@@ -103,8 +103,10 @@ Tokyo Night dark palette (the owner's Obsidian theme), held as constants in
 `main.js` — not the app theme's tokens and not a read of the vault's CSS:
 body background #1a1b26, header/footer chrome #16161e, borders #292e42,
 body text #c0caf5, muted text #a9b1d6, faint text #565f89, error text #db4b4b,
-accent (`NIGHT.accent`) #bb9af7 — Tokyo Night's magenta, the selected tab's underline.
-A selected tab SHALL read in the body text colour with the accent, and an unselected tab in the muted colour. The body SHALL be rendered in #c0caf5 at reading size, and each element in it
+accent (`NIGHT.accent`) #bb9af7 — Tokyo Night's magenta, the selected tab's underline,
+done green #9ece6a — a complete change's name, selected tab and checklist.
+A selected tab SHALL read in the body text colour with the accent, and an unselected tab in the muted colour.
+When every task in the change's `tasks.md` is done, the viewer SHALL make completeness obvious in the done green: the change's name, the selected tab's text and underline, a `✓ complete` chip in the tab bar, and the checklist's text; a change with no task rows SHALL NOT count as complete. The body SHALL be rendered in #c0caf5 at reading size, and each element in it
 SHALL take its colour from the palette. The palette
 SHALL be fixed regardless of the app theme, and the change list SHALL keep
 the app theme's tokens.
@@ -117,12 +119,22 @@ the app theme's tokens.
 #### Scenario: Tab colours
 
 - **WHEN** the bar draws its tabs
-- **THEN** the selected tab takes the body text colour with a #bb9af7 accent underline, and the others the muted colour, hover brightening to the body text colour
+- **THEN** the selected tab takes the body text colour with a #bb9af7 accent underline (the done green when the change is complete), and the others the muted colour, hover brightening to the body text colour
 
 #### Scenario: Same in every app theme
 
 - **WHEN** Herdr's app theme is light or dark
 - **THEN** the viewer looks the same — Tokyo Night dark
+
+#### Scenario: A complete change reads green
+
+- **WHEN** every task in the change's `tasks.md` is done
+- **THEN** the change's name, the selected tab and its underline, a `✓ complete` chip and the checklist text all take the done green
+
+#### Scenario: A change with no tasks
+
+- **WHEN** the change has no task rows
+- **THEN** the viewer shows no `✓ complete` chip and no green completion styling
 
 #### Scenario: The list is not themed
 

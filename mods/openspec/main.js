@@ -3,17 +3,18 @@
 // so a ticked task or a new change shows up at once (local spaces only; remote
 // spaces fall back to a 15-second poll). Click a change to fold out its task
 // list from tasks.md; click a task to tick or untick it in the file itself
-// (local only); right-click it for a small menu (Copy name; View proposal
-// opens the change's proposal.md beside the work, drawn in Tokyo Night — the
-// owner's Obsidian theme — by the mod's own markdown renderer, since the
-// TextView component styles itself from the app theme and reads flat); the
+// (local only); right-click it for a small menu (Copy name; View change opens
+// the whole change beside the work — proposal, design, tasks and specs, one
+// tab each — drawn in Tokyo Night, the owner's Obsidian theme, by the mod's
+// own markdown renderer, since the TextView component styles itself from the
+// app theme and reads flat; the tasks tab ticks checkboxes in tasks.md); the
 // box button archives it (openspec archive --yes).
 //
 // Lives at ~/.config/herdr-app/mods/openspec/.
 // https://github.com/AshMcConnell/herdr-openspec — MIT license.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, Tabs, Tab } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
@@ -78,7 +79,7 @@ const MENU = [
     cx.write_to_clipboard(name);
     notify({ title: "Name copied", body: name, level: "success" });
   } },
-  { label: "View proposal", run: (name, cx, at) => {
+  { label: "View change", run: (name, cx, at) => {
     if (!at?.root) { notify({ title: "No repository yet", body: "The panel is still finding this folder", level: "error" }); return; }
     run("pane.split", { direction: "right", mod: "openspec",
       props: { file: `${at.root}/openspec/changes/${name}/proposal.md`, change: name, on: at.on ?? null } });
@@ -105,16 +106,17 @@ const STATES = [
 ];
 
 // Tokyo Night (dark) — the owner's Obsidian theme, as constants (the mod must
-// not read a vault's CSS or depend on Obsidian paths). Proposal viewer only;
+// not read a vault's CSS or depend on Obsidian paths). The change viewer only;
 // the change list keeps the app theme.
 const NIGHT = {
   bg: "#1a1b26",    // --background-primary
-  bgAlt: "#16161e", // --background-secondary (header/footer chrome)
+  bgAlt: "#16161e", // --background-secondary (tab bar/footer chrome)
   border: "#292e42",// --background-modifier-border
   fg: "#c0caf5",    // --text-normal
-  muted: "#a9b1d6", // --text-muted (the proposal.md chip)
+  muted: "#a9b1d6", // --text-muted (unselected tabs)
   faint: "#565f89", // --text-faint (footer path, loading/absent/empty states)
   error: "#db4b4b", // --text-error (read failure)
+  accent: "#bb9af7", // --magenta (the selected tab's underline)
 };
 
 // The markdown decorations, beside NIGHT's chrome colours — each entry mapped
@@ -132,12 +134,17 @@ const NIGHT_MD = {
   linkHover: "#7dcfff", // --link-color-hover/--link-external-color-hover: var(--cyan)
   codeBg: "#242838",  // --code-background: var(--bg_highlight_dark) (inline and fenced share it)
   codeFg: "#c0caf5",  // --code-normal: var(--fg)
-  quoteBar: "#565f89",// Obsidian's default --blockquote-border-color: var(--text-faint) — the theme sets only the background
+  quoteBar: "#80d0ff",// the owner's Tokyo Night theme accent (hsl(202,100%,75%))
   quoteBg: "#16161e", // --blockquote-background-color: var(--bg_dark)
   hr: "#292e42",      // Obsidian's default --hr-color: var(--background-modifier-border)
   marker: "#565f89",  // Obsidian's default --list-marker-color: var(--text-faint)
   done: "#9ece6a",    // --checkbox-color: var(--green) (a checked task box)
 };
+
+// One artifact's read state: `text` is undefined while the first read is in
+// flight, null when the file is absent, a string once read; `error` is the
+// failure's text when the read throws.
+const blankDoc = () => ({ text: undefined, error: null });
 
 function stateOf(c) {
   if (c.total > 0 && c.done >= c.total) return "complete";
@@ -161,7 +168,7 @@ function visible(self) {
   return rows;
 }
 
-// ---- The proposal body renderer ------------------------------------------
+// ---- The markdown body renderer ------------------------------------------
 //
 // gpui-kit's TextView.markdown styles itself from the app theme, so beside
 // this navy pane it drew app-charcoal headings, code and links — the pane
@@ -173,7 +180,7 @@ function visible(self) {
 // [text](url). Anything else — tables, images, escapes — stays literal text:
 // nothing is ever dropped.
 
-// Block cap for a pathological file; proposals are a few KB.
+// Block cap for a pathological file; change documents are a few KB.
 const MAX_MD_BLOCKS = 2000;
 
 // Heading text sizes on the 15px reading size, at roughly Obsidian's em
@@ -187,19 +194,19 @@ const MD_HEAD = [
   { size: 15, lh: "21px", mt: 2 }, { size: 14, lh: "20px", mt: 2 },
 ];
 
-// proposal.md -> { blocks, truncated }. Blocks are {kind:"h",level,text},
+// A markdown document -> { blocks, truncated }. Blocks are {kind:"h",level,text},
 // {kind:"p",text}, {kind:"code",lang,lines}, {kind:"quote",text},
 // {kind:"list",items:[{marker,depth,task,text}]} (task: null, or the checkbox
 // state), {kind:"hr"}.
 function mdBlocks(text) {
-  const lines = text.split("\n"), blocks = [];
+  const lines = text.split(/\r?\n/), blocks = [];
   let para = null, truncated = false;
   const flush = () => { if (para) { blocks.push({ kind: "p", text: para }); para = null; } };
   for (let i = 0; i < lines.length; i++) {
     if (blocks.length >= MAX_MD_BLOCKS) { truncated = true; break; }
     const line = lines[i];
     if (/^\s*$/.test(line)) { flush(); continue; }
-    const fence = /^\s*(`{3,}|~{3,})\s*(\S*)\s*$/.exec(line);
+    const fence = /^\s*(`{3,}|~{3,})\s*(.*?)\s*$/.exec(line);
     if (fence) {
       flush();
       const close = new RegExp(`^\\s*${fence[1][0]}{${fence[1].length},}\\s*$`), code = [];
@@ -329,18 +336,21 @@ const mdPara = (text, key, size, lh) => h_flex().flex_wrap().items_baseline().fl
   .text_size(size).line_height(lh).text_color(NIGHT.fg)
   .children(mdRuns(mdInline(text), key, size));
 
-// The whole document: the change's name as a title in the exact H1 style (a
-// kebab-case name, not a `#` line — the document below renders as-is either
-// way), then the blocks; padded so the text never touches the pane's edges
-// (the padding scrolls with the content), blocks spaced on a common rhythm.
-function mdView(text, title) {
+// The change's name as a title in the exact H1 style (a kebab-case name, not
+// a `#` line — the document below renders as-is either way).
+function mdTitle(title, key = "mdtitle", color = NIGHT_MD.h[0]) {
+  return h_flex().flex_wrap().items_baseline().flex_none().text_size(MD_HEAD[0].size)
+    .line_height(MD_HEAD[0].lh).text_color(color).font_bold()
+    .children(mdRuns(mdInline(title), key, MD_HEAD[0].size));
+}
+
+// The document's blocks as flat elements. `prefix` keeps the inline link ids
+// apart when several documents share one scroll (the specs tab).
+function mdBody(text, prefix = "md") {
   const { blocks, truncated } = mdBlocks(text);
   const out = [];
-  if (title) out.push(h_flex().flex_wrap().items_baseline().flex_none().text_size(MD_HEAD[0].size)
-    .line_height(MD_HEAD[0].lh).text_color(NIGHT_MD.h[0]).font_bold()
-    .children(mdRuns(mdInline(title), "mdtitle", MD_HEAD[0].size)));
   blocks.forEach((b, i) => {
-    const key = `md${i}`;
+    const key = `${prefix}${i}`;
     if (b.kind === "h") {
       const head = MD_HEAD[b.level - 1];
       out.push(h_flex().flex_wrap().items_baseline().flex_none().text_size(head.size)
@@ -374,7 +384,17 @@ function mdView(text, title) {
     } else out.push(mdPara(b.text, key, 15, "24px"));
   });
   if (truncated) out.push(div().flex_none().mt(2).text_size(12).text_color(NIGHT.faint)
-    .child("… truncated — the rest of proposal.md is not shown"));
+    .child("… truncated — the rest of this file is not shown"));
+  return out;
+}
+
+// A whole document: the title, then the blocks; padded so the text never
+// touches the pane's edges (the padding scrolls with the content), blocks
+// spaced on a common rhythm. A complete change's title is green.
+function mdView(text, title, prefix = "md", titleColor = NIGHT_MD.h[0]) {
+  const out = [];
+  if (title) out.push(mdTitle(title, `${prefix}title`, titleColor));
+  out.push(...mdBody(text, prefix));
   return v_flex().flex_none().p(14).gap(6).children(out);
 }
 
@@ -384,19 +404,28 @@ export default class OpenSpec extends View {
     this.at = 0; // the right-click menu's keyboard spot
     // The right-click menu popup: no list, no polls, no folder watch.
     if (typeof props()?.menuFor === "string") { this.handle.focus(); return; }
-    // The proposal viewer pane (pane.split {mod, props:{file,...}}): reads one
-    // file from its props — no list, no location(), nothing that follows focus,
-    // so a pane saved with its tab works on its own after a restart.
+    // The change viewer pane (pane.split {mod, props:{file,...}}): reads the
+    // change's artifacts from its props — no list, no location(), nothing that
+    // follows focus, so a pane saved with its tab works on its own after a
+    // restart. `file` is the anchor: the change's directory is everything up
+    // to its last slash.
     if (typeof props()?.file === "string") {
       this.file = props().file;
+      this.dir = this.file.replace(/[^/]*$/, ""); // ends in "/"
       this.change = typeof props()?.change === "string" ? props().change
         : (this.file.split("/").filter(Boolean).at(-2) ?? "Proposal");
       this.machine = props()?.on ?? null;
-      this.text = undefined; // undefined = loading, null = no proposal.md, string = read
-      this.error = null;
-      this.load(cx);
-      if (this.machine) cx.timer.every(15000, (cx) => this.load(cx));
-      else this.watchProposal(cx);
+      this.tab = "proposal";
+      this.tabsAvailable = ["proposal"];
+      this.docs = { proposal: blankDoc(), design: blankDoc(), tasks: blankDoc() };
+      this.specs = { items: [], error: null };
+      this.specsLoading = false;
+      this.tasksText = null; // the compare-and-swap snapshot of tasks.md
+      this.toggling = false;
+      this.generation = 0;
+      this.loadArtifacts(cx);
+      if (this.machine) cx.timer.every(15000, (cx) => this.loadArtifacts(cx));
+      else this.watchChange(cx);
       return;
     }
     this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.toggling = null;
@@ -487,24 +516,179 @@ export default class OpenSpec extends View {
   }
 
   // The viewer's refresh: local panes watch the change's own folder
-  // (watchFolder is local-only); remote panes and a watch that can't arm
-  // fall back to the 15-second poll, like the panel's own remote rule.
-  watchProposal(cx) {
-    const dir = this.file.replace(/[^/]*$/, "");
+  // (watchFolder recurses on macOS/Windows, so spec deltas are covered);
+  // remote panes and a watch that can't arm fall back to the 15-second poll,
+  // like the panel's own remote rule.
+  watchChange(cx) {
+    const dir = this.dir.replace(/\/$/, "") || "/";
     cx.spawn(async (cx) => {
-      try { for (;;) { await watchFolder(dir); await this.load(cx); } }
-      catch { cx.timer.every(15000, (cx) => this.load(cx)); }
+      try { for (;;) { await watchFolder(dir); await this.loadArtifacts(cx); } }
+      catch { cx.timer.every(15000, (cx) => this.loadArtifacts(cx)); }
     });
   }
 
-  async load(cx) {
-    const file = this.file;
-    try {
-      const text = await readTextFile(file, { on: this.machine });
-      if (this.file !== file) return;
-      this.text = text; this.error = null;   // null = absent
-    } catch (e) { if (this.file === file) this.error = String(e); }
+  // One artifact file, probe and read in one call: null = absent.
+  async readDoc(name) {
+    try { return { text: await readTextFile(`${this.dir}${name}`, { on: this.machine }), error: null }; }
+    catch (e) { return { text: undefined, error: String(e) }; }
+  }
+
+  // The change's delta specs: `find` lists each capability's spec.md, local
+  // and remote alike (readdir has no granted read root for an arbitrary
+  // repository); sorted by capability, de-duplicated. A missing specs folder
+  // is simply no specs; any other failure is a note.
+  async listSpecs() {
+    const specsDir = `${this.dir}specs`, on = this.machine;
+    let found;
+    try { found = await exec("find", [specsDir, "-name", "spec.md"], { on }); }
+    catch (e) { return { items: [], error: String(e) }; }
+    if (found.code !== 0) {
+      const why = (found.stderr || found.stdout || `find failed (${found.code})`).trim();
+      if (/No such file|does not exist|not found/i.test(why)) return { items: [], error: null };
+      return { items: [], error: why.split("\n")[0] };
+    }
+    const seen = new Set(), caps = [];
+    for (const path of found.stdout.split("\n").map((l) => l.trim()).filter(Boolean)) {
+      const rel = path.startsWith(specsDir) ? path.slice(specsDir.length).replace(/^\/+/, "") : path;
+      const parts = rel.split("/");
+      // Only specs/<capability>/spec.md is a capability delta; a stray
+      // specs/spec.md or a deeper file is not one.
+      if (parts.length !== 2 || !parts[0] || parts[1] !== "spec.md") continue;
+      const cap = parts[0];
+      if (!seen.has(cap)) { seen.add(cap); caps.push({ cap, path }); }
+    }
+    caps.sort((a, b) => a.cap.localeCompare(b.cap));
+    const items = [];
+    for (const c of caps) {
+      try {
+        const text = await readTextFile(c.path, { on });
+        if (text !== null) items.push({ cap: c.cap, path: c.path, text, error: null });
+      } catch (e) { items.push({ cap: c.cap, path: c.path, text: undefined, error: String(e) }); }
+    }
+    return { items, error: null };
+  }
+
+  // One discovery pass: read the three single files and list the specs, then
+  // decide the tab set from what is there. Proposal is always the anchor; a
+  // file that failed to read keeps its tab so the error can be shown.
+  async discover() {
+    const [proposal, design, tasks, specs] = await Promise.all([
+      this.readDoc("proposal.md"), this.readDoc("design.md"), this.readDoc("tasks.md"), this.listSpecs(),
+    ]);
+    const tabs = ["proposal"];
+    if (design.text !== null) tabs.push("design");
+    if (tasks.text !== null) tabs.push("tasks");
+    if (specs.items.length > 0 || specs.error) tabs.push("specs");
+    return { docs: { proposal, design, tasks }, specs, tabs };
+  }
+
+  // Re-run discovery and adopt the result, unless the pane's file changed or a
+  // newer read started meanwhile. While a task write is in flight the tasks
+  // document keeps its optimistic flip.
+  async loadArtifacts(cx) {
+    const file = this.file, gen = ++this.generation;
+    let next;
+    try { next = await this.discover(); }
+    catch (e) {
+      if (this.file === file && gen === this.generation) {
+        this.docs.proposal = { text: undefined, error: String(e) };
+        cx.notify();
+      }
+      return;
+    }
+    if (this.file !== file || gen !== this.generation) return;
+    if (this.toggling) next.docs.tasks = this.docs.tasks;
+    this.docs = next.docs;
+    this.specs = next.specs;
+    this.specsLoading = false;
+    this.tabsAvailable = next.tabs;
+    if (!this.toggling) this.tasksText = next.docs.tasks.text ?? null;
+    if (!this.tabsAvailable.includes(this.tab)) this.tab = "proposal";
     cx.notify();
+  }
+
+  // A tab click: select it at once, then read just that artifact — the other
+  // tabs are not read eagerly.
+  select(id, cx) {
+    if (this.tab === id) return;
+    this.tab = id;
+    cx.notify();
+    const file = this.file, gen = ++this.generation;
+    if (id === "specs") {
+      this.specsLoading = true;
+      cx.notify();
+      cx.spawn(async (cx) => {
+        const specs = await this.listSpecs();
+        this.specsLoading = false;
+        if (this.file !== file || gen !== this.generation) { cx.notify(); return; }
+        this.specs = specs;
+        if (!specs.items.length && !specs.error) {
+          this.tabsAvailable = this.tabsAvailable.filter((t) => t !== "specs");
+          if (this.tab === "specs") this.tab = "proposal";
+        }
+        cx.notify();
+      });
+      return;
+    }
+    cx.spawn(async (cx) => {
+      const doc = await this.readDoc(`${id}.md`);
+      if (this.file !== file || gen !== this.generation) return;
+      this.docs[id] = doc;
+      if (id === "tasks" && !this.toggling) this.tasksText = doc.text ?? null;
+      if (doc.text === null) {
+        this.tabsAvailable = this.tabsAvailable.filter((t) => t !== id);
+        if (this.tab === id) this.tab = "proposal";
+      }
+      cx.notify();
+    });
+  }
+
+  // A task click in the viewer, with the panel's semantics: optimistic flip,
+  // one write at a time, compare-and-swap on the viewer's own snapshot, one
+  // re-read and retry when the snapshot is stale, a toast when it still
+  // cannot land. Local panes only — writeTextFile takes no `on`.
+  toggleTask(row, cx) {
+    if (this.machine || this.toggling || typeof row.line !== "number") return;
+    const snapshot = this.docs.tasks.text;
+    if (typeof snapshot !== "string") return;
+    const path = `${this.dir}tasks.md`, line = row.line, task = row.text, to = !row.done;
+    const optimistic = toggled(snapshot, line, task, to);
+    if (optimistic === null) {
+      notify({ title: "Task not updated", body: "the task changed under the click", level: "error" });
+      return;
+    }
+    this.tasksText = snapshot;
+    this.docs.tasks.text = optimistic;
+    this.toggling = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      let body = snapshot, settled = null, why = "";
+      try {
+        let next = toggled(body, line, task, to);
+        if (next !== null) {
+          try { await writeTextFile(path, next, body); settled = next; }
+          catch { next = null; } // stale snapshot: fall through to a re-read
+        }
+        if (settled === null) {
+          body = await readTextFile(path);
+          if (body === null) why = "tasks.md is gone";
+          else {
+            next = toggled(body, line, task, to);
+            if (next === null) { why = "the task changed under the click"; settled = body; }
+            else { await writeTextFile(path, next, body); settled = next; }
+          }
+        }
+      } catch (e) { why = String(e); if (settled === null) settled = body; }
+      if (typeof settled === "string") {
+        this.tasksText = settled;
+        this.docs.tasks.text = settled;
+        this.docs.tasks.error = null;
+      }
+      this.toggling = false;
+      if (why) notify({ title: "Task not updated", body: why, level: "error" });
+      await this.loadArtifacts(cx); // adopt the file's real state either way
+      cx.notify();
+    });
   }
 
   pick(name, cx) {
@@ -680,36 +864,131 @@ export default class OpenSpec extends View {
     cx.notify();
   }
 
-  // The viewer pane: a slim bar carrying the proposal.md chip over the file
-  // drawn by the mod's own markdown renderer (mdView above) — the change's
-  // name leads the body as an H1-style title, and headings, links, code,
-  // quotes and the text itself all take their colours from the built-in
-  // Tokyo Night palette (the owner's Obsidian theme), fixed whatever the app
-  // theme is. The document is padded inside its scroll container and is not
-  // text-selectable (that was the TextView's doing); the machine-prefixed
-  // path sits in a footer.
-  proposalView() {
-    const where = `${this.machine ? `${this.machine}: ` : ""}${this.file}`;
-    return v_flex().id("openspec-proposal").size_full().min_h(0).rounded(10).overflow_hidden().bg(NIGHT.bg)
+  // A change is complete when tasks.md has at least one task row and every
+  // row is done; a change with no task rows is not complete. Recomputed from
+  // the task text each render so the last tick turns the page green at once.
+  isComplete() {
+    const text = this.docs.tasks.text;
+    if (typeof text !== "string" || !text.length) return false;
+    const rows = taskRows(text).filter((r) => typeof r.line === "number");
+    return rows.length > 0 && rows.every((r) => r.done);
+  }
+
+  // The change viewer: a tab bar for the artifacts the change has, the
+  // selected tab's body, and the machine-prefixed change directory. Every
+  // surface is drawn from the built-in Tokyo Night palette (the owner's
+  // Obsidian theme), fixed whatever the app theme is. A complete change reads
+  // green — title, selected tab, a chip in the bar and its checklist.
+  changeView() {
+    const where = `${this.machine ? `${this.machine}: ` : ""}${this.dir.replace(/\/$/, "") || this.dir}`;
+    const complete = this.isComplete();
+    return v_flex().id("openspec-viewer").size_full().min_h(0).rounded(10).overflow_hidden().bg(NIGHT.bg)
       .border_1().border_color(NIGHT.border).text_color(NIGHT.fg).text_size(13)
-      .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().bg(NIGHT.bgAlt).border_b(1).border_color(NIGHT.border)
-        .child(div().flex_1())
-        .child(div().px(5).py(1).rounded(4).border_1().border_color(NIGHT.border).text_size(10).text_color(NIGHT.muted).flex_none().child("proposal.md")))
+      .child(this.tabBar(complete))
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar()
-        .when(this.error, (e) => e.child(div().p(10).text_color(NIGHT.error).child(this.error)))
-        .when(!this.error && this.text === undefined, (e) => e.child(div().p(10).text_color(NIGHT.faint).child("Loading proposal…")))
-        .when(!this.error && this.text === null, (e) => e.child(div().p(10).text_color(NIGHT.faint).child("No proposal.md — this change has none")))
-        .when(!this.error && this.text === "", (e) => e.child(div().p(10).text_color(NIGHT.faint).child("proposal.md is empty")))
-        .when(!this.error && typeof this.text === "string" && this.text.length > 0, (e) =>
-          e.child(mdView(this.text, this.change))))
-      .when(Boolean(this.file), (e) => e.child(h_flex().flex_none().h(26).px(12).items_center().bg(NIGHT.bgAlt).border_t(1).border_color(NIGHT.border)
+        .when(this.tab === "tasks", (e) => e.child(this.tasksView(complete)))
+        .when(this.tab === "specs", (e) => e.child(this.specsView(complete)))
+        .when(this.tab === "proposal" || this.tab === "design", (e) => e.child(this.docView(this.tab, complete))))
+      .when(Boolean(where), (e) => e.child(h_flex().flex_none().h(26).px(12).items_center().bg(NIGHT.bgAlt).border_t(1).border_color(NIGHT.border)
         .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(NIGHT.faint).child(where))));
+  }
+
+  // The tab bar replaces the old header: one Tab per artifact the change has,
+  // selected state in, click out. Tabs/Tab carry semantics only, so the mod
+  // draws the colours — selected body text with the magenta underline,
+  // unselected muted and brightening on hover. A complete change takes the
+  // green done colour throughout and shows a ✓ complete chip at the right.
+  tabBar(complete) {
+    const n = this.tabsAvailable.length, accent = complete ? NIGHT_MD.done : NIGHT.accent;
+    return h_flex().h(42).flex_none().px(10).gap(2).items_center().bg(NIGHT.bgAlt).border_b(1).border_color(NIGHT.border)
+      .child(Tabs.new("openspec-tabs").h_full().flex_none().flex().items_center().gap(2)
+        .children(this.tabsAvailable.map((id, i) => {
+          const on = this.tab === id;
+          return Tab.new(`openspec-tab-${id}`).h_full().flex_none().flex().items_center().px(12)
+            .text_size(12.5).font_medium()
+            .text_color(on ? (complete ? NIGHT_MD.done : NIGHT.fg) : NIGHT.muted)
+            .border_b(2).border_color(on ? accent : NIGHT.bgAlt)
+            .hover((s) => s.text_color(complete ? NIGHT_MD.done : NIGHT.fg))
+            .selected(on)
+            .set_position(i + 1, n)
+            .on_click((_e, cx) => this.select(id, cx))
+            .child(id);
+        })))
+      .child(div().flex_1())
+      .when(complete, (e) => e.child(div().px(6).py(1).rounded(4).border_1().border_color(NIGHT_MD.done)
+        .text_size(10).text_color(NIGHT_MD.done).flex_none().child("✓ complete")));
+  }
+
+  // A document tab: the change's name leads as the H1-style title, then the
+  // artifact through the mod's own markdown renderer. Per-artifact states
+  // explain loading, absent, empty and failed reads.
+  docView(id, complete) {
+    const doc = this.docs[id], name = `${id}.md`;
+    if (doc.error) return div().p(14).text_color(NIGHT.error).child(doc.error);
+    if (doc.text === undefined) return div().p(14).text_color(NIGHT.faint)
+      .child(id === "proposal" ? "Loading proposal…" : `Loading ${name}…`);
+    if (doc.text === null) return div().p(14).text_color(NIGHT.faint)
+      .child(id === "proposal" ? "No proposal.md — this change has none" : `${name} is not here`);
+    if (doc.text === "") return div().p(14).text_color(NIGHT.faint).child(`${name} is empty`);
+    return mdView(doc.text, this.change, "md", complete ? NIGHT_MD.done : NIGHT_MD.h[0]);
+  }
+
+  // The specs tab: one scroll, each capability's spec.md under a heading of
+  // its name, the change's name as the title once at the top.
+  specsView(complete) {
+    if (this.specsLoading) return div().p(14).text_color(NIGHT.faint).child("Loading specs…");
+    if (this.specs.error) return div().p(14).text_color(NIGHT.error)
+      .child(`Specs could not be listed: ${this.specs.error}`);
+    if (!this.specs.items.length) return div().p(14).text_color(NIGHT.faint).child("No specs in this change");
+    const out = this.change ? [mdTitle(this.change, "mdtitle", complete ? NIGHT_MD.done : NIGHT_MD.h[0])] : [];
+    this.specs.items.forEach((it, i) => {
+      out.push(h_flex().flex_none().mt(i ? 14 : 8).pb(4).border_b(1).border_color(NIGHT.border)
+        .child(div().text_size(MD_HEAD[1].size).line_height(MD_HEAD[1].lh).font_bold().text_color(NIGHT.fg).child(it.cap)));
+      if (it.error) out.push(div().pt(4).text_color(NIGHT.error).child(it.error));
+      else if (it.text === undefined) out.push(div().pt(4).text_color(NIGHT.faint).child(`Loading ${it.cap}/spec.md…`));
+      else if (it.text === null) out.push(div().pt(4).text_color(NIGHT.faint).child(`${it.cap}/spec.md is not here`));
+      else if (it.text === "") out.push(div().pt(4).text_color(NIGHT.faint).child(`${it.cap}/spec.md is empty`));
+      else out.push(...mdBody(it.text, `spec${i}-`));
+    });
+    return v_flex().flex_none().p(14).gap(4).children(out);
+  }
+
+  // The tasks tab is a themed checklist, not markdown: section headings in
+  // the muted colour, ✓ green for done, ○ faint for open, every task's text
+  // in full (no truncation, no row cap — this is the page, not a list row).
+  tasksView(complete) {
+    const doc = this.docs.tasks;
+    if (doc.error) return div().p(14).text_color(NIGHT.error).child(doc.error);
+    if (doc.text === undefined) return div().p(14).text_color(NIGHT.faint).child("Loading tasks.md…");
+    if (doc.text === null) return div().p(14).text_color(NIGHT.faint).child("tasks.md is not here");
+    if (doc.text === "") return div().p(14).text_color(NIGHT.faint).child("tasks.md is empty");
+    const rows = taskRows(doc.text);
+    if (!rows.length) return div().p(14).text_color(NIGHT.faint).child("No tasks yet");
+    return v_flex().flex_none().p(14).gap(2)
+      .children(rows.map((r, i) => r.section
+        ? div().mt(i ? 12 : 0).mb(3).text_size(11).font_semibold().text_color(NIGHT.muted).child(r.section)
+        : this.taskRowView(r, complete)));
+  }
+
+  // One checklist row. Local panes click to tick; remote panes render the
+  // same row with no click handler (writeTextFile takes no `on`). A complete
+  // change reads green all through, like the panel's row.
+  taskRowView(row, complete) {
+    const el = h_flex().id(`openspec-task-${row.line}`).flex_none().items_start().gap(8).px(6).py(2).rounded(4)
+      .child(div().flex_none().w(14).text_size(14).line_height("20px")
+        .text_color(row.done ? NIGHT_MD.done : NIGHT.faint).child(row.done ? "✓" : "○"))
+      .child(div().flex_1().min_w(0).text_size(13).line_height("20px")
+        .text_color(complete ? NIGHT_MD.done : NIGHT.fg).child(row.text || " "));
+    if (!this.machine) {
+      el.cursor_pointer().hover((s) => s.bg(NIGHT.bgAlt)).on_click((_e, cx) => this.toggleTask(row, cx));
+    }
+    return el;
   }
 
   render(cx) {
     const t = theme();
     if (typeof props()?.menuFor === "string") return this.menuView(t);
-    if (typeof props()?.file === "string") return this.proposalView();
+    if (typeof props()?.file === "string") return this.changeView();
     if (key() !== this.context) this.refresh(cx);
     const rows = visible(this);
     const done = rows.reduce((n, c) => n + c.done, 0), total = rows.reduce((n, c) => n + c.total, 0);

@@ -22,9 +22,11 @@ Constraints from the runtime: `Tabs` and `Tab` are `ComponentType`s with
 semantics only — no styling (`Tab` is controlled: `selected(…)` in,
 `on_click(…)` out; `set_position(i, size)` places them). `readTextFile(path,
 {on})` probes local or remote and returns `null` for an absent file.
-`readdir` is `fs/promises` — local only, no `on` — so a remote specs listing
-must go through `exec("find", …)`. `watchFolder` recurses on macOS and
-Windows, so watching the change's own directory covers `specs/`.
+`readdir` is `fs/promises` — local only and, at apply time, refused for an
+arbitrary repository ("outside every granted read root"), so the specs
+listing goes through `exec("find", …)` on both local and remote machines.
+`watchFolder` recurses on macOS and Windows, so watching the change's own
+directory covers `specs/`.
 
 ## Goals / Non-Goals
 
@@ -85,12 +87,11 @@ Discovery runs in one pass and re-runs on every refresh:
 - The three single files are probed with `readTextFile(path, {on})` — the
   same call the body needs anyway, so a probe and a read are one operation
   (`null` = absent). That works identically local and remote.
-- The specs listing is `readdir(changeDir + "/specs")` locally, keeping only
-  the entries that actually contain a `spec.md` (a `readTextFile` probe per
-  capability, local), or
-  `exec("find", [specsDir, "-name", "spec.md"], {on})` on a remote machine.
-  Results are sorted by capability name and de-duplicated. An exec failure
-  means "no specs content" plus a note — it must never break the viewer.
+- The specs listing is `exec("find", [specsDir, "-name", "spec.md"], {on})` —
+  local and remote alike, because at apply time `readdir` was refused for an
+  arbitrary repository (no granted read root). Results are sorted by
+  capability name and de-duplicated. An exec failure means "no specs content"
+  plus a note — it must never break the viewer.
 - Tabs are recomputed each refresh: present artifacts get a tab, missing ones
   lose theirs. Proposal always has one; an absent or archived change keeps
   the existing "No proposal.md — this change has none" body rather than an
@@ -169,15 +170,27 @@ instead of one file:
   same discovery + open-tab read cycle.
 - Reads are guarded against a stale `file` prop, as today.
 
+### D7 — A complete change reads green
+
+Completeness is derived from the tasks text on every render: at least one
+checkbox row, and every row done. A change with no task rows is not complete
+(there is nothing to finish). When complete, the viewer takes the same green
+the panel uses for a finished change (`NIGHT_MD.done`, #9ece6a): the change's
+name, the selected tab's text and underline, a `✓ complete` chip at the right
+of the tab bar, and the checklist's text. The rest of the markdown keeps its
+own palette — a red heading stays red; the green marks the change's state,
+not a repaint of the document. Detection is local to the viewer and needs no
+new read: `taskRows()` already runs for the tasks tab.
+
 ## Risks / Trade-offs
 
 - **Tabs may draw their own chrome** → The d.ts documents semantics, not
   looks. Style plainly and verify in the running app at apply time; if the
   component adds its own underline or background, drop it and keep the
   mod-drawn bar.
-- **Remote specs listing depends on `find`** → An exec failure (no `find`, a
+- **The specs listing depends on `find`** → An exec failure (no `find`, a
   permission error) degrades to no specs content with a note, never a broken
-  viewer.
+  viewer. Local and remote use the same call, so there is one failure path.
 - **Re-reading big spec files on every switch** → Only the open tab is read
   eagerly; a local `watchFolder` wake already re-reads just that tab.
   Discovery probes are small and cached by the OS.

@@ -12,13 +12,13 @@ the mod's specified behaviour.
 Click a change to fold out its task list from `tasks.md`; click a task to
 tick or untick it there. Press the box button to archive a change
 (`openspec archive`, confirmed twice, reported by toast). Right-click a
-change for a small menu — **Copy name**, and **View proposal**, which opens
-the change's `proposal.md` beside your work, drawn in Tokyo Night (the
-Obsidian theme): the pane renders the markdown itself — headings, links,
-code and quotes all in theme colours — rather than letting the app theme
-style the text. The list follows the repository of
-the terminal you're focused on — including spaces that live on another
-machine.
+change for a small menu — **Copy name**, and **View change**, which opens
+the whole change beside your work in a tabbed viewer: **proposal**,
+**design**, **tasks** and **specs**, one tab for each artifact it has, all
+in Tokyo Night (the Obsidian theme), drawn by the mod's own markdown
+renderer, with a click-to-tick checklist on the tasks tab. The list follows
+the repository of the terminal you're focused on — including spaces that
+live on another machine.
 
 ![OpenSpec as a floating window](preview-window.png)
 
@@ -40,12 +40,16 @@ machine.
   and when the change was last touched. Rows sort most recent first,
   as `openspec list` does.
 - **Right-click a row**: a small menu — **Copy name** puts the change's name
-  on the clipboard and a toast confirms it, and **View proposal** opens a
-  pane to the right showing the change's `proposal.md` rendered in Tokyo
-  Night colours by the mod's own markdown renderer (the change's name leads
-  the body as a title; scrollable, padded;
-  not text-selectable), with the file's path;
-  it works for remote spaces too. Built to take more items later.
+  on the clipboard and a toast confirms it, and **View change** opens a
+  pane to the right showing the whole change as tabs: **proposal**,
+  **design**, **tasks** and **specs**, only for artifacts the change has.
+  Every body is rendered in Tokyo Night colours by the mod's own markdown
+  renderer (the change's name leads as a title; scrollable, padded;
+  not text-selectable), the tasks tab is a checklist you can tick from —
+  the panel's compare-and-swap write, local panes only — and the footer
+  names the change's directory. A change with every task done turns green:
+  its name, the selected tab and a **✓ complete** chip. It works for remote
+  spaces too. Built to take more items later.
 - **Expanded**: the change's task list — ✓ for done, ○ for open, under its
   `tasks.md` section headings. Click a task to toggle its box in `tasks.md`:
   the row flips at once and the counts follow when the new file is read back
@@ -67,8 +71,9 @@ it creates appears right away — ticking a task from the panel proves it:
 the same watch carries its own write back into the counts. A 15-second poll
 covers remote machines (the folder watch is local-only), and switching
 spaces or panes re-reads at once.
-An open proposal pane follows edits to `proposal.md` the same way — a folder
-watch locally, a 15-second poll on remote machines.
+An open change viewer watches the change's own folder the same way, so edits
+to any artifact — `specs/<capability>/spec.md` included — show up as they
+happen; remote viewers poll every 15 seconds.
 It runs `openspec list --json` in the focused repository — on its machine for
 remote spaces, the same way Herdr's own panels run `git`.
 
@@ -144,9 +149,10 @@ this machine. It never runs a shell: every call is an argument list, and
 change names come from `openspec list`, never typed input. Nothing goes to
 the network.
 
-The **View proposal** viewer adds no programs: it reads `proposal.md` with
-Herdr's file reader (on the change's machine for remote spaces) and opens
-itself with `pane.split`.
+The **View change** viewer runs `find` to list a change's specs (local and
+remote alike) and otherwise adds no programs: it reads `proposal.md`,
+`design.md` and `tasks.md` with Herdr's file reader (on the change's machine
+for remote spaces) and opens itself with `pane.split`.
 
 ## Limits
 
@@ -163,15 +169,19 @@ itself with `pane.split`.
 - **The filter matches change names** — not task text or specs.
 - **"Nearly done" means at most 2 tasks remain** — a fixed threshold, not a
   percentage; state chips and the state grouping use it.
-- **Every View proposal click opens another pane** — no de-duplication.
-  Remote proposal panes poll every 15 seconds, reads are capped at 1 MiB,
-  and a pane whose change was archived shows *No proposal.md* until closed.
-- **The proposal pane's palette is fixed** — Tokyo Night dark (the owner's
+- **Every View change click opens another pane** — no de-duplication.
+  Remote change viewers poll every 15 seconds, reads are capped at 1 MiB,
+  and a pane whose change was archived falls back to the proposal tab's
+  *No proposal.md* until closed.
+- **Remote tasks are read-only** — the viewer's checklist renders but a
+  click writes nothing (the file writer is local-only).
+- **The change viewer's palette is fixed** — Tokyo Night dark (the owner's
   Obsidian theme), whatever the app theme is; a dark pane in a light theme
-  is deliberate. The body is drawn by the mod's own markdown renderer, so
+  is deliberate. Every body is drawn by the mod's own markdown renderer, so
   the text itself plus headings, links, code and quotes all take theme
-  colours; tables, images, deep list nesting and other exotic markdown fall
-  back to literal text lines, and the rendered document is not
+  colours; only http(s) links are clickable, and other URLs stay coloured
+  but inert; tables, images, deep list nesting and other exotic markdown
+  fall back to literal text lines, and the rendered document is not
   text-selectable (the old text view was).
 
 ## License

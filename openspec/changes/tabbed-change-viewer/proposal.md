@@ -26,7 +26,9 @@ row out in the panel.
   panel's folded-out list). On a local pane a click ticks that line in the file
   with the panel's compare-and-swap semantics — a stale snapshot gets one
   re-read and retry, the flip is optimistic, a failure reports by toast, and
-  only one toggle runs at a time. Remote panes are read-only.
+  only one toggle runs at a time. Remote panes are read-only. When every task
+  is done the viewer reads green — the change's name, the selected tab, a
+  `✓ complete` chip and the checklist — so a finished change is obvious.
 - **The specs tab** (`proposal-viewer` delta): the change's delta specs,
   rendered under a heading of each capability's name; no specs directory
   means no specs tab.
@@ -67,8 +69,8 @@ None.
 
 - Affected code at apply time: `mods/openspec/main.js`, plus README.md and
   RECIPE.md. This round writes artifacts only — no code.
-- No new programs beyond the `find` used to list a remote change's specs
-  (local listing uses `readdir`). No network.
+- No new programs beyond the `find` used to list a change's specs (local and
+  remote alike; `readdir` had no granted read root at apply time). No network.
 - Remote panes render every tab but cannot tick tasks — the panel behaves the
   same way.
 - The panel's change list is untouched, and `task-tracking` still specs the

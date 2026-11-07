@@ -19,8 +19,10 @@ archives that change: first click turns it into a red "Archive?" chip, the
 second runs `openspec archive <name> --yes` and reports by toast.
 Right-click a row for a small menu of its own: **Copy name** puts the
 change's name on the clipboard (`write_to_clipboard`; a toast confirms), and
-**View proposal** opens the change's `proposal.md` as a markdown pane beside
-the work.
+**View change** opens the whole change as a tabbed viewer beside the work —
+proposal, design, tasks and specs, one tab for each artifact the change has,
+with the tasks tab's checklist ticking checkboxes in `tasks.md` (this
+machine only).
 It reads
 the repository of the focused pane — else any pane with a folder in the
 active space, else the space's folder — running `openspec` there, on its
@@ -42,15 +44,19 @@ It shows itself four ways:
   `"cmd-alt-o": "mod.open:openspec"` binds a key.
 - **A pane**: `herdr-app do pane.split '{"direction":"right","mod":"openspec"}'`.
   A `"props":{"folder":"/path/to/repo"}` pins it to one repository.
-- **A proposal viewer**: the same pane split with
+- **A change viewer**: the same pane split with
   `"props":{"file":"/path/to/repo/openspec/changes/<name>/proposal.md","change":"<name>","on":null}`
-  shows the same mod as a viewer for that one `proposal.md` — the change's
-  name as a title, then headings, bullets and code drawn by the mod's own
-  renderer in Tokyo Night colours
-  (scrollable and padded, not text-selectable), in a
-  fixed Tokyo Night (the owner's Obsidian theme) palette
-  (normally opened from the row menu's **View proposal**; the props are
-  saved with the tab, so the pane survives restarts).
+  shows the same mod as a tabbed viewer for that change — **proposal /
+  design / tasks / specs**, a tab only for each artifact present, every body
+  drawn by the mod's own renderer in a fixed Tokyo Night (the owner's
+  Obsidian theme) palette (scrollable and padded, not text-selectable; only
+  http(s) links are clickable, other URLs stay coloured but inert). The
+  tasks tab is a full checklist; on this machine a click ticks that line in
+  `tasks.md` with the panel's compare-and-swap write (remote panes are
+  read-only). When every task is done the viewer reads green — its name, the
+  selected tab, a `✓ complete` chip and the checklist. Normally opened from
+  the row menu's **View change**; the props are saved with the tab, so the
+  pane survives restarts.
 
 ## What it runs
 
@@ -63,15 +69,18 @@ It shows itself four ways:
 - `git rev-parse --show-toplevel` once per switch, to anchor the watch and
   the `tasks.md` reads and writes at the repository root (the folder itself
   when git fails).
+- `find <change>/specs -name spec.md` when a viewer lists a change's delta
+  specs (local and remote alike; the mod has no granted read root for
+  `readdir`).
 
 The row menu's copy uses the app's clipboard directly — not a command.
 
-The row menu's **View proposal** opens the same mod as a pane beside the
-work (`pane.split` with `{file, change, on}` props) and reads nothing but
-its own `proposal.md` with `readTextFile` (on the pane's machine for remote
-spaces): a folder watch on the change's own folder keeps a local pane
-current, and remote panes poll every 15 seconds (as does a watch that
-cannot arm).
+The row menu's **View change** opens the same mod as a pane beside the
+work (`pane.split` with `{file, change, on}` props) and reads the change's
+artifacts with `readTextFile` (on the pane's machine for remote spaces): a
+folder watch on the change's own folder keeps a local pane current —
+`specs/` included — and remote panes poll every 15 seconds (as does a watch
+that cannot arm).
 
 Nothing else: no shell, no network. `readTextFile` reads the expanded
 change's `tasks.md`, and a task click writes it back with `writeTextFile`:
