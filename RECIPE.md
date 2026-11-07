@@ -44,8 +44,10 @@ It shows itself four ways:
   A `"props":{"folder":"/path/to/repo"}` pins it to one repository.
 - **A proposal viewer**: the same pane split with
   `"props":{"file":"/path/to/repo/openspec/changes/<name>/proposal.md","change":"<name>","on":null}`
-  shows the same mod as a viewer for that one `proposal.md` — headings,
-  bullets and code rendered as markdown, selectable and scrollable, in a
+  shows the same mod as a viewer for that one `proposal.md` — the change's
+  name as a title, then headings, bullets and code drawn by the mod's own
+  renderer in Tokyo Night colours
+  (scrollable and padded, not text-selectable), in a
   fixed Tokyo Night (the owner's Obsidian theme) palette
   (normally opened from the row menu's **View proposal**; the props are
   saved with the tab, so the pane survives restarts).

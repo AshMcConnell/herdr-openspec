@@ -4,16 +4,17 @@
 // spaces fall back to a 15-second poll). Click a change to fold out its task
 // list from tasks.md; click a task to tick or untick it in the file itself
 // (local only); right-click it for a small menu (Copy name; View proposal
-// opens the change's proposal.md as a markdown pane beside the work, themed
-// Tokyo Night — the owner's Obsidian theme); the box button archives it
-// (openspec archive --yes).
+// opens the change's proposal.md beside the work, drawn in Tokyo Night — the
+// owner's Obsidian theme — by the mod's own markdown renderer, since the
+// TextView component styles itself from the app theme and reads flat); the
+// box button archives it (openspec archive --yes).
 //
 // Lives at ~/.config/herdr-app/mods/openspec/.
 // https://github.com/AshMcConnell/herdr-openspec — MIT license.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run } from "herdr";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
 // focused pane's live folder, else any pane with one in the active space (any
@@ -116,6 +117,28 @@ const NIGHT = {
   error: "#db4b4b", // --text-error (read failure)
 };
 
+// The markdown decorations, beside NIGHT's chrome colours — each entry mapped
+// from the rule that styles it in the owner's Tokyo Night theme.css (dark
+// block; the theme's own base vars --red/--yellow/--green/--cyan/--blue/
+// --magenta are rgb(255,117,127)/rgb(224,175,104)/rgb(158,206,106)/
+// rgb(125,207,255)/rgb(122,162,247)/rgb(187,154,247)). Where the theme leaves
+// a variable unset it falls through to Obsidian's default, noted per line.
+const NIGHT_MD = {
+  h: ["#ff757f", "#e0af68", "#9ece6a", "#7dcfff", "#7aa2f7", "#bb9af7"],
+    // --h1-color..--h6-color: var(--red)/--yellow/--green/--cyan/--blue/--magenta
+  bold: "#7dcfff",    // --bold-color: var(--cyan)
+  italic: "#7dcfff",  // --italic-color: var(--cyan)
+  link: "#bb9af7",    // --link-color and --link-external-color: var(--magenta)
+  linkHover: "#7dcfff", // --link-color-hover/--link-external-color-hover: var(--cyan)
+  codeBg: "#242838",  // --code-background: var(--bg_highlight_dark) (inline and fenced share it)
+  codeFg: "#c0caf5",  // --code-normal: var(--fg)
+  quoteBar: "#565f89",// Obsidian's default --blockquote-border-color: var(--text-faint) — the theme sets only the background
+  quoteBg: "#16161e", // --blockquote-background-color: var(--bg_dark)
+  hr: "#292e42",      // Obsidian's default --hr-color: var(--background-modifier-border)
+  marker: "#565f89",  // Obsidian's default --list-marker-color: var(--text-faint)
+  done: "#9ece6a",    // --checkbox-color: var(--green) (a checked task box)
+};
+
 function stateOf(c) {
   if (c.total > 0 && c.done >= c.total) return "complete";
   if (c.total === 0) return "draft";
@@ -136,6 +159,218 @@ function visible(self) {
   else if (self.sort === "state") rows = [...rows].sort((a, b) =>
     STATES.findIndex((s) => s.id === stateOf(a)) - STATES.findIndex((s) => s.id === stateOf(b)));
   return rows;
+}
+
+// ---- The proposal body renderer ------------------------------------------
+//
+// gpui-kit's TextView.markdown styles itself from the app theme, so beside
+// this navy pane it drew app-charcoal headings, code and links — the pane
+// read as "same dark pane as before". The mod therefore draws its own
+// markdown out of plain elements, every one coloured from NIGHT/NIGHT_MD.
+// Blocks: headings, fenced code, lists (one nesting level; deeper indents
+// nest), blockquotes, rules, paragraphs (consecutive non-block lines merge,
+// like markdown). Inline: `code`, **bold**, *italic*, _italic_ and
+// [text](url). Anything else — tables, images, escapes — stays literal text:
+// nothing is ever dropped.
+
+// Block cap for a pathological file; proposals are a few KB.
+const MAX_MD_BLOCKS = 2000;
+
+// Heading text sizes on the 15px reading size. The theme leaves sizes to
+// Obsidian's defaults (1.8em down), which are tuned for a full editor window;
+// these gentler steps fit a pane while keeping the hierarchy obvious.
+const MD_HEAD = [
+  { size: 22.5, lh: "30px" }, { size: 20.5, lh: "27px" }, { size: 18, lh: "24px" },
+  { size: 16.5, lh: "22px" }, { size: 15, lh: "24px" }, { size: 15, lh: "24px" },
+];
+
+// proposal.md -> { blocks, truncated }. Blocks are {kind:"h",level,text},
+// {kind:"p",text}, {kind:"code",lang,lines}, {kind:"quote",text},
+// {kind:"list",items:[{marker,depth,task,text}]} (task: null, or the checkbox
+// state), {kind:"hr"}.
+function mdBlocks(text) {
+  const lines = text.split("\n"), blocks = [];
+  let para = null, truncated = false;
+  const flush = () => { if (para) { blocks.push({ kind: "p", text: para }); para = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    if (blocks.length >= MAX_MD_BLOCKS) { truncated = true; break; }
+    const line = lines[i];
+    if (/^\s*$/.test(line)) { flush(); continue; }
+    const fence = /^\s*(`{3,}|~{3,})\s*(\S*)\s*$/.exec(line);
+    if (fence) {
+      flush();
+      const close = new RegExp(`^\\s*${fence[1][0]}{${fence[1].length},}\\s*$`), code = [];
+      let j = i + 1;
+      for (; j < lines.length && !close.test(lines[j]); j++) code.push(lines[j]);
+      blocks.push({ kind: "code", lang: fence[2] || "", lines: code });
+      i = j; // past the closing fence, or EOF
+      continue;
+    }
+    const head = /^(#{1,6})\s+(.*?)(?:\s+#+\s*)?$/.exec(line);
+    if (head) { flush(); blocks.push({ kind: "h", level: head[1].length, text: head[2].trim() }); continue; }
+    if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); blocks.push({ kind: "hr" }); continue; }
+    const quoted = /^ {0,3}> ?(.*)$/.exec(line);
+    if (quoted) {
+      flush();
+      const text = [quoted[1]];
+      let j = i + 1;
+      for (; j < lines.length; j++) {
+        const q = /^ {0,3}> ?(.*)$/.exec(lines[j]);
+        if (!q) break;
+        text.push(q[1]);
+      }
+      blocks.push({ kind: "quote", text: text.join(" ") });
+      i = j - 1;
+      continue;
+    }
+    if (/^(\s*)([-*+]|\d+[.)])\s+(.+)$/.test(line)) {
+      flush();
+      const items = [];
+      let j = i;
+      for (; j < lines.length; j++) {
+        const m = /^(\s*)([-*+]|\d+[.)])\s+(.+)$/.exec(lines[j]);
+        if (m) {
+          const task = /^\[( |x|X)\]\s*(.*)$/.exec(m[3]);
+          items.push({
+            marker: /\d/.test(m[2]) ? m[2] : "•",
+            depth: m[1].length >= 2 ? 1 : 0,
+            task: task ? task[1].toLowerCase() === "x" : null,
+            text: task ? task[2] : m[3],
+          });
+          continue;
+        }
+        // An indented non-marker line continues the item above it (markdown's
+        // wrapped item text); a blank or flush-left line ends the list.
+        const cont = /^ {2,}(\S.*)$/.exec(lines[j]);
+        if (!cont || !items.length) break;
+        const last = items[items.length - 1];
+        last.text = `${last.text} ${cont[1]}`;
+      }
+      blocks.push({ kind: "list", items });
+      i = j - 1;
+      continue;
+    }
+    para = para ? `${para} ${line.trim()}` : line.trim();
+  }
+  flush();
+  return { blocks, truncated };
+}
+
+// One inline run splitter for everything: `code`, **bold**, [text](url),
+// *italic*, _italic_ (underscore requires a non-word before and after, so
+// snake_case stays literal). Alternatives are ordered so ** wins over *.
+const MD_INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\[[^\]\n]+\]\([^()\s]+\))|(\*[^*\n]+\*)|((?<![\w`])_[^_\n]+_(?![\w`]))/g;
+
+// A paragraph's text -> runs {t:"text"|"code"|"bold"|"italic"|"link", s, url}.
+function mdInline(text) {
+  const runs = [];
+  let at = 0, m;
+  MD_INLINE.lastIndex = 0;
+  while ((m = MD_INLINE.exec(text))) {
+    if (m.index > at) runs.push({ t: "text", s: text.slice(at, m.index) });
+    const s = m[0];
+    if (m[1]) runs.push({ t: "code", s: s.slice(1, -1) });
+    else if (m[2]) runs.push({ t: "bold", s: s.slice(2, -2) });
+    else if (m[3]) {
+      const link = /^\[([^\]\n]+)\]\(([^()\s]+)\)$/.exec(s);
+      runs.push({ t: "link", s: link[1], url: link[2] });
+    } else runs.push({ t: "italic", s: s.slice(1, -1) });
+    at = m.index + s.length;
+  }
+  if (at < text.length) runs.push({ t: "text", s: text.slice(at) });
+  return runs;
+}
+
+// Code and links keep their text whole; plain/bold/italic runs split into
+// word+trailing-space chunks so the flex_wrap row below wraps mid-sentence
+// the way inline text does (a whole sentence as one flex child could not).
+const mdChunks = (s) => s.match(/\S+\s*|\s+/g) ?? [];
+
+// The mono face for code: the terminal font (a mono face, settings.json's
+// `font`), falling back to JetBrains Mono, which ships with Herdr.
+const monoFont = () => (typeof settings()?.font === "string" && settings().font) || "JetBrains Mono";
+
+// Inline runs -> styled elements laid out inline inside a flex_wrap row. The
+// container supplies size/colour/line height; runs add their own.
+function mdRuns(tokens, key) {
+  const out = [];
+  tokens.forEach((r, n) => {
+    if (r.t === "code") {
+      out.push(div().flex_none().px(5).rounded(4).bg(NIGHT_MD.codeBg).text_color(NIGHT_MD.codeFg)
+        .font_family(monoFont()).text_size(13).child(r.s || " "));
+    } else if (r.t === "link") {
+      if (/^https?:\/\//i.test(r.url ?? "")) {
+        out.push(div().flex_none().id(`os-md-link-${key}-${n}`).text_color(NIGHT_MD.link).underline()
+          .cursor_pointer().hover((st) => st.text_color(NIGHT_MD.linkHover))
+          .on_click((_e, cx) => cx.open_url(r.url)).child(r.s));
+      } else { // a relative or non-http target: coloured, not clickable
+        out.push(div().flex_none().text_color(NIGHT_MD.link).underline().child(r.s));
+      }
+    } else {
+      const bold = r.t === "bold", italic = r.t === "italic";
+      out.push(...mdChunks(r.s).map((chunk) => {
+        const el = div().flex_none().child(chunk);
+        if (bold) el.font_bold().text_color(NIGHT_MD.bold);
+        if (italic) el.italic().text_color(NIGHT_MD.italic);
+        return el;
+      }));
+    }
+  });
+  return out;
+}
+
+// A styled paragraph row: the words of every run flowing and wrapping inline.
+const mdPara = (text, key, size, lh) => h_flex().flex_wrap().items_baseline().flex_none()
+  .text_size(size).line_height(lh).text_color(NIGHT.fg)
+  .children(mdRuns(mdInline(text), key));
+
+// The whole document: the change's name as a title in the exact H1 style (a
+// kebab-case name, not a `#` line — the document below renders as-is either
+// way), then the blocks; padded so the text never touches the pane's edges
+// (the padding scrolls with the content), blocks spaced on a common rhythm.
+function mdView(text, title) {
+  const { blocks, truncated } = mdBlocks(text);
+  const out = [];
+  if (title) out.push(h_flex().flex_wrap().items_baseline().flex_none().text_size(MD_HEAD[0].size)
+    .line_height(MD_HEAD[0].lh).text_color(NIGHT_MD.h[0]).font_bold()
+    .children(mdRuns(mdInline(title), "mdtitle")));
+  blocks.forEach((b, i) => {
+    const key = `md${i}`;
+    if (b.kind === "h") {
+      const head = MD_HEAD[b.level - 1];
+      out.push(h_flex().flex_wrap().items_baseline().flex_none().text_size(head.size)
+        .line_height(head.lh).text_color(NIGHT_MD.h[b.level - 1]).font_bold()
+        .when(i > 0, (e) => e.mt(6))
+        .children(mdRuns(mdInline(b.text), key)));
+    } else if (b.kind === "code") {
+      const box = v_flex().flex_none().mt(2).rounded(6).bg(NIGHT_MD.codeBg)
+        .border_1().border_color(NIGHT.border).overflow_hidden()
+        .when(Boolean(b.lang), (e) => e.child(div().px(10).pt(6).text_size(10).text_color(NIGHT.faint).child(b.lang)));
+      box.child(v_flex().flex_none().px(10).py(8)
+        .children(b.lines.map((ln) => div().font_family(monoFont()).text_size(12.5).line_height("19px")
+          .text_color(NIGHT_MD.codeFg).child(ln.length ? ln : " "))));
+      out.push(box);
+    } else if (b.kind === "quote") {
+      out.push(mdPara(b.text, key, 15, "24px").mt(2).py(4).pl(10)
+        .bg(NIGHT_MD.quoteBg).border_l(2).border_color(NIGHT_MD.quoteBar));
+    } else if (b.kind === "list") {
+      const list = v_flex().flex_none().gap(1);
+      b.items.forEach((it, j) => {
+        const done = it.task === true;
+        list.child(h_flex().flex_none().items_start().gap(7).pl(8 + it.depth * 16)
+          .child(div().flex_none().min_w(14).text_size(15).line_height("24px")
+            .text_color(done ? NIGHT_MD.done : NIGHT_MD.marker)
+            .child(it.task === null ? it.marker : done ? "✓" : "○"))
+          .child(mdPara(it.text, `${key}-${j}`, 15, "24px").flex_1().min_w(0)));
+      });
+      out.push(list);
+    } else if (b.kind === "hr") {
+      out.push(div().flex_none().mt(2).h(1).bg(NIGHT_MD.hr));
+    } else out.push(mdPara(b.text, key, 15, "24px"));
+  });
+  if (truncated) out.push(div().flex_none().mt(2).text_size(12).text_color(NIGHT.faint)
+    .child("… truncated — the rest of proposal.md is not shown"));
+  return v_flex().flex_none().p(14).gap(6).children(out);
 }
 
 export default class OpenSpec extends View {
@@ -440,27 +675,28 @@ export default class OpenSpec extends View {
     cx.notify();
   }
 
-  // The viewer pane: the change's name and a proposal.md chip over the file
-  // rendered as markdown (selectable, its own scroll), the machine-prefixed
-  // path in a footer — painted from the built-in Tokyo Night palette (the
-  // owner's Obsidian theme), fixed whatever the app theme is; only the
-  // body's inherited text colour and typography are themed (the TextView
-  // component's own decorations — headings, code, links — keep their look).
+  // The viewer pane: a slim bar carrying the proposal.md chip over the file
+  // drawn by the mod's own markdown renderer (mdView above) — the change's
+  // name leads the body as an H1-style title, and headings, links, code,
+  // quotes and the text itself all take their colours from the built-in
+  // Tokyo Night palette (the owner's Obsidian theme), fixed whatever the app
+  // theme is. The document is padded inside its scroll container and is not
+  // text-selectable (that was the TextView's doing); the machine-prefixed
+  // path sits in a footer.
   proposalView() {
     const where = `${this.machine ? `${this.machine}: ` : ""}${this.file}`;
     return v_flex().id("openspec-proposal").size_full().min_h(0).rounded(10).overflow_hidden().bg(NIGHT.bg)
       .border_1().border_color(NIGHT.border).text_color(NIGHT.fg).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().bg(NIGHT.bgAlt).border_b(1).border_color(NIGHT.border)
-        .child(div().flex_1().min_w(0).truncate().font_semibold().child(this.change))
+        .child(div().flex_1())
         .child(div().px(5).py(1).rounded(4).border_1().border_color(NIGHT.border).text_size(10).text_color(NIGHT.muted).flex_none().child("proposal.md")))
-      .child(v_flex().flex_1().min_h(0)
+      .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar()
         .when(this.error, (e) => e.child(div().p(10).text_color(NIGHT.error).child(this.error)))
         .when(!this.error && this.text === undefined, (e) => e.child(div().p(10).text_color(NIGHT.faint).child("Loading proposal…")))
         .when(!this.error && this.text === null, (e) => e.child(div().p(10).text_color(NIGHT.faint).child("No proposal.md — this change has none")))
         .when(!this.error && this.text === "", (e) => e.child(div().p(10).text_color(NIGHT.faint).child("proposal.md is empty")))
         .when(!this.error && typeof this.text === "string" && this.text.length > 0, (e) =>
-          e.child(TextView.markdown("openspec-proposal-text", this.text).text_color(NIGHT.fg).text_size(15).line_height(1.6)
-            .flex_1().min_h(0).selectable().scrollable())))
+          e.child(mdView(this.text, this.change))))
       .when(Boolean(this.file), (e) => e.child(h_flex().flex_none().h(26).px(12).items_center().bg(NIGHT.bgAlt).border_t(1).border_color(NIGHT.border)
         .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(NIGHT.faint).child(where))));
   }

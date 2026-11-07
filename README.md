@@ -13,8 +13,10 @@ Click a change to fold out its task list from `tasks.md`; click a task to
 tick or untick it there. Press the box button to archive a change
 (`openspec archive`, confirmed twice, reported by toast). Right-click a
 change for a small menu — **Copy name**, and **View proposal**, which opens
-the change's `proposal.md` rendered as markdown in a Tokyo Night (the
-Obsidian theme) pane beside your work. The list follows the repository of
+the change's `proposal.md` beside your work, drawn in Tokyo Night (the
+Obsidian theme): the pane renders the markdown itself — headings, links,
+code and quotes all in theme colours — rather than letting the app theme
+style the text. The list follows the repository of
 the terminal you're focused on — including spaces that live on another
 machine.
 
@@ -39,8 +41,10 @@ machine.
   as `openspec list` does.
 - **Right-click a row**: a small menu — **Copy name** puts the change's name
   on the clipboard and a toast confirms it, and **View proposal** opens a
-  pane to the right showing the change's `proposal.md` as rendered markdown
-  (selectable and scrollable), with the change's name and the file's path;
+  pane to the right showing the change's `proposal.md` rendered in Tokyo
+  Night colours by the mod's own markdown renderer (the change's name leads
+  the body as a title; scrollable, padded;
+  not text-selectable), with the file's path;
   it works for remote spaces too. Built to take more items later.
 - **Expanded**: the change's task list — ✓ for done, ○ for open, under its
   `tasks.md` section headings. Click a task to toggle its box in `tasks.md`:
@@ -164,9 +168,11 @@ itself with `pane.split`.
   and a pane whose change was archived shows *No proposal.md* until closed.
 - **The proposal pane's palette is fixed** — Tokyo Night dark (the owner's
   Obsidian theme), whatever the app theme is; a dark pane in a light theme
-  is deliberate. Only the pane's chrome and the body's text colour and
-  typography are themed — the markdown decorations the text component draws
-  itself (headings, code, links) keep their own styling.
+  is deliberate. The body is drawn by the mod's own markdown renderer, so
+  the text itself plus headings, links, code and quotes all take theme
+  colours; tables, images, deep list nesting and other exotic markdown fall
+  back to literal text lines, and the rendered document is not
+  text-selectable (the old text view was).
 
 ## License
 
