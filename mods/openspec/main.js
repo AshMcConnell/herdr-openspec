@@ -18,17 +18,36 @@ import { v_flex, h_flex, InputState, Input, Tabs, Tab } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings, shared, setShared, nextCommand } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
-// focused pane's live folder, else any pane with one in the active space (any
-// tab — this mod's own pane has none), else the space's. `on` is the machine
-// that folder lives on (null: this one).
+// focused pane's (or focused layout terminal block's) live folder, else the
+// last folder a terminal gave us in this space, else any pane with one in the
+// active space (any tab — this mod's own pane has none), else the space's.
+// `on` is the machine that folder lives on (null: this one).
+//
+// Clicking the panel, a viewer or the floating window focuses a mod pane or an
+// overlay, which has no folder. That must not send the list to whichever other
+// tab happens to be first: `lastTerminal` keeps the terminal location the list
+// was following. It is keyed by active space so a real space switch still
+// resolves afresh.
+let lastTerminal = null; // { cwd, on, space }
+
 function location() {
   const pinned = typeof props()?.folder === "string" ? props().folder : null;
   const space = spaces().find((s) => s.active), f = focused();
   const all = panes(), tabs = new Set((space?.tabs ?? []).map((c) => c.id));
   const pane = f?.pane ? all.find((p) => p.pane === f.pane && p.cwd) : null;
-  const any = all.find((p) => tabs.has(p.tab) && p.cwd);
+  const cwd = pane?.cwd || f?.cwd || null;
   const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
-  return { cwd: pinned || pane?.cwd || any?.cwd || f?.cwd || space?.folder || null, on };
+  // Focus is the mod's own surface (no folder): keep following the terminal
+  // the list was reading, as long as we are still in the same space.
+  if (!pinned && !cwd && lastTerminal && lastTerminal.space === space?.id) {
+    return { cwd: lastTerminal.cwd, on: lastTerminal.on };
+  }
+  const any = all.find((p) => tabs.has(p.tab) && p.cwd);
+  const next = { cwd: pinned || cwd || any?.cwd || space?.folder || null, on };
+  // Remember only a folder that came from a real terminal focus, never the
+  // any-pane guess, so the next mod-pane click keeps this exact repository.
+  if (cwd && space?.id) lastTerminal = { cwd, on, space: space.id };
+  return next;
 }
 const key = () => JSON.stringify(location());
 
@@ -217,7 +236,7 @@ const SORTS = [
 ];
 
 const STATES = [
-  { id: "complete", label: "✓ Complete", chip: "✓ complete", color: "done" },
+  { id: "complete", label: "✓ Complete", chip: "✓ complete", color: "ansi10" },
   { id: "nearly", label: "Nearly done", chip: null, color: "accent" },
   { id: "progress", label: "In progress", chip: null, color: "muted" },
   { id: "unstarted", label: "Unstarted", chip: "unstarted", color: "muted" },
@@ -273,6 +292,11 @@ function stateOf(c) {
   return "progress";
 }
 
+// The green a complete change wears. The theme's `done` token is an agent
+// status colour (blue in graphite), not a success colour; the ANSI bright
+// green is the conventional green in every theme, with the normal ANSI green
+// and a fixed green as fallbacks.
+const green = (t) => t.ansi10 || t.ansi2 || "#3fae6a";
 
 // The visible list: the filter (name substring, case-insensitive) applied,
 // then the chosen sort. openspec's order is already recent-first; "state"
@@ -1068,9 +1092,9 @@ export default class OpenSpec extends View {
       .text_size(10).font_semibold().text_color(t.dim)
       .when(Boolean(section), (e) => e.tooltip(section)).child(section);
     return h_flex().id(`os-task-${line}`).h(18).flex_none().px(8).gap(7).items_center()
-      .child(div().w(11).flex_none().text_size(11).text_color(done ? t.done : t.dim).child(done ? "✓" : "○"))
+      .child(div().w(11).flex_none().text_size(11).text_color(done ? green(t) : t.dim).child(done ? "✓" : "○"))
       .child(div().flex_1().min_w(0).truncate().text_size(11)
-        .text_color(done ? (complete ? t.done : t.dim) : t.foreground).child(text || " "))
+        .text_color(done ? (complete ? green(t) : t.dim) : t.foreground).child(text || " "))
       .when(Boolean(text), (e) => e.tooltip(text))
       .when(!this.on, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => this.toggle(row, name, cx)));
@@ -1081,7 +1105,7 @@ export default class OpenSpec extends View {
     const confirming = this.confirming === c.name && Date.now() < this.confirmUntil;
     const state = stateOf(c), remaining = c.total - c.done;
     const chip = (label, color) => div().px(5).rounded(4).border_1().border_color(t.border).text_size(10).text_color(color).flex_none().child(label);
-    const barColor = state === "complete" ? t.done : state === "nearly" ? t.accent : t.working;
+    const barColor = state === "complete" ? green(t) : state === "nearly" ? t.accent : t.working;
     return v_flex().flex_none()
       .child(h_flex().id(`chg-${c.name}`).h(38).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
         .when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(c.name, cx))
@@ -1089,9 +1113,9 @@ export default class OpenSpec extends View {
           cx.stop_propagation();
           openOverlay({ mod: "openspec", kind: "popup", width: 200, height: 240, props: { menuFor: c.name, root: this.root, on: this.on, panel: this.panelId } });
         })
-        .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(complete ? t.done : t.foreground).child(c.name))
-        .when(c.total > 0, (e) => e.child(div().text_size(11).text_color(complete ? t.done : t.muted).child(`${c.done}/${c.total}`)))
-        .when(state === "complete", (e) => e.child(chip("✓ complete", t.done)))
+        .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(complete ? green(t) : t.foreground).child(c.name))
+        .when(c.total > 0, (e) => e.child(div().text_size(11).text_color(complete ? green(t) : t.muted).child(`${c.done}/${c.total}`)))
+        .when(state === "complete", (e) => e.child(chip("✓ complete", green(t))))
         .when(state === "nearly", (e) => e.child(chip(`${remaining} left`, t.accent)))
         .when(state === "unstarted", (e) => e.child(chip("unstarted", t.muted)))
         .when(state === "draft", (e) => e.child(chip("no tasks", t.dim)))
@@ -1328,7 +1352,7 @@ export default class OpenSpec extends View {
           last = st;
           const meta = STATES.find((s) => s.id === st), count = rows.filter((r) => stateOf(r) === st).length;
           return [div().id(`os-group-${st}`).h(22).flex_none().flex().items_center().px(8).gap(6).truncate()
-            .text_size(10).font_semibold().text_color(t[meta.color]).child(meta.label).child(div().text_color(t.dim).child(String(count))), this.row(c, t)];
+            .text_size(10).font_semibold().text_color(st === "complete" ? green(t) : t[meta.color]).child(meta.label).child(div().text_color(t.dim).child(String(count))), this.row(c, t)];
         }); })() : rows.map((c) => this.row(c, t))).flat())
         .when(!rows.length, (e) => e.child(div().p(8).text_color(t.dim)
           .child(filtering && this.changes.length ? `No changes match “${this.filter.trim()}”`

@@ -20,7 +20,8 @@ in Tokyo Night (the Obsidian theme), drawn by the mod's own markdown
 renderer, with a click-to-tick checklist on the tasks tab. Another **View
 change** switches that open viewer instead of adding a pane. The list follows
 the repository of the terminal you're focused on — including spaces that
-live on another machine.
+live on another machine. Clicking the panel, a viewer or the floating window
+does not change that repository; it stays on the last terminal you focused.
 
 ![OpenSpec as a floating window](preview-window.png)
 
@@ -31,13 +32,14 @@ live on another machine.
 - **Toolbar**: a filter box (matches change names, case-insensitive, `Esc` or
   the × clears it) and a sort button that cycles **recent → A–Z → % done →
   state**. The choice is remembered. Header totals follow the filtered set.
-- **State, at a glance**: every row carries a chip — green `✓ complete`,
+- **State, at a glance**: every row carries a chip — bright green `✓ complete`
+  (the theme's ANSI green; not its `done` status colour, which can be blue),
   blue `N left` when at most 2 tasks remain, `unstarted` (has tasks, none
   done), or `no tasks` (a proposal-only draft) — and the progress bar takes
   the state's color. The **state** sort groups the list under
   ✓ Complete / Nearly done / In progress / Unstarted / No tasks headers,
   each with its count. A complete change reads green all the way down —
-  name, count, and its task list once expanded.
+  name, count, bar, chip and its task list once expanded.
 - **One row per active change**: name, progress bar, `done/total` tasks,
   and when the change was last touched. Rows sort most recent first,
   as `openspec list` does.
@@ -181,6 +183,9 @@ own `view` and `open` commands — no new programs, no files and no network.
 - **The filter matches change names** — not task text or specs.
 - **"Nearly done" means at most 2 tasks remain** — a fixed threshold, not a
   percentage; state chips and the state grouping use it.
+- **The list follows the last terminal click** — clicking the panel, an open
+  viewer or the floating window leaves the folder alone; a different terminal
+  or space resolves again, and a restart starts from the focused terminal.
 - **Viewer switching follows the newest viewer for the same repository and
   machine** — a row click or **View change** retargets it; viewers for
   another repository, another machine, or an older one are left alone. The

@@ -9,14 +9,16 @@ cycling recent → A–Z → % done → state (remembered in the panel's
 Each row carries a state chip — `✓ complete`, `N left` (at most 2 tasks
 remaining), `unstarted`, or `no tasks` (proposal-only) — and the progress
 bar takes the state's color (a complete change reads green all through:
-name, count, and its task list once expanded); the **state** sort groups the
-list under ✓ Complete / Nearly done / In progress / Unstarted / No tasks
-headers with counts. Clicking a row folds out the change's task list from
-its `tasks.md` (✓ done, ○ open, section headings; hovering shows a truncated
-row's full text); clicking a task ticks or unticks its checkbox in
-`tasks.md` itself (this machine only). The box button on a row
-archives that change: first click turns it into a red "Archive?" chip, the
-second runs `openspec archive <name> --yes` and reports by toast.
+name, count, bar, chip, and its task list once expanded); the green is the
+theme's ANSI bright green, not its `done` status colour (which can be blue).
+The **state** sort groups the list under ✓ Complete / Nearly done / In
+progress / Unstarted / No tasks headers with counts. Clicking a row folds out
+the change's task list from its `tasks.md` (✓ done, ○ open, section
+headings; hovering shows a truncated row's full text); clicking a task ticks
+or unticks its checkbox in `tasks.md` itself (this machine only). The box
+button on a row archives that change: first click turns it into a red
+"Archive?" chip, the second runs `openspec archive <name> --yes` and reports
+by toast.
 Right-click a row for a small menu of its own: **Copy name** puts the
 change's name on the clipboard (`write_to_clipboard`; a toast confirms), and
 **View change** opens the whole change as a tabbed viewer beside the work —
@@ -27,9 +29,10 @@ the same repository and machine instead of adding a pane, and opens a new
 pane only when no viewer answers; clicking another row switches that viewer
 too and never opens one.
 It reads
-the repository of the focused pane — else any pane with a folder in the
-active space, else the space's folder — running `openspec` there, on its
-machine for remote spaces.
+the repository of the last focused terminal — clicking the panel, an open
+viewer or the floating window leaves that folder alone — else any pane with a
+folder in the active space, else the space's folder — running `openspec`
+there, on its machine for remote spaces.
 
 ![OpenSpec docked in the side panel](preview-panel.png)
 
