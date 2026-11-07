@@ -15,7 +15,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Tabs, Tab } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings, shared, setShared, nextCommand } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
 // focused pane's live folder, else any pane with one in the active space (any
@@ -31,6 +31,115 @@ function location() {
   return { cwd: pinned || pane?.cwd || any?.cwd || f?.cwd || space?.folder || null, on };
 }
 const key = () => JSON.stringify(location());
+
+// ---- Viewer switching -----------------------------------------------------
+//
+// A viewer pane's change lives in its own props, so it cannot be reopened on
+// another change without a new pane. The panel and the open viewers therefore
+// talk through Herdr's shared values: each viewer registers itself, the panel
+// addresses a retarget request to one id, and the viewer's `view` command is
+// the cue to look — rendering must not have side effects. The panel names the
+// list copy that should wait for the acknowledgement (`open`), because the
+// row menu is a popup whose cx ends when it closes.
+const VIEWERS = "openspec.viewers"; // { [id]: { at, file, root, on } }
+const VIEW = "openspec.view";       // prefix: openspec.view.<id> = { id, seq, file, change, on }
+const ACK = "openspec.view.ack";    // { [seq]: id }
+const QUIET = "openspec.view.quiet";// { [id]: ms } a viewer that did not answer
+const OPEN = "openspec.open";       // prefix: openspec.open.<panel> = { panel, name, root, on, seq }
+const VIEW_ACK_MS = 700;
+const VIEW_QUIET_MS = 15000;
+const VIEWER_AGE_MS = 7 * 86400000;
+const VIEWER_CAP = 40;
+
+const viewKey = (id) => `${VIEW}.${id}`;
+const openKey = (panel) => `${OPEN}.${panel}`;
+
+const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+// <repository>/openspec/changes/<name>/ -> <repository>. Null when the path
+// is not a change directory (a hand-written pane prop, say).
+const repoOf = (dir) => {
+  const i = (dir || "").indexOf("/openspec/changes/");
+  return i > 0 ? dir.slice(0, i) : null;
+};
+
+// The registry, pruned of entries too old to still be a live copy and capped
+// so it cannot grow forever. `at` is the launch time, in ms.
+function pruneViewers(all = shared(VIEWERS)) {
+  const now = Date.now();
+  const map = all && typeof all === "object" ? all : {};
+  return Object.fromEntries(Object.entries(map)
+    .filter(([, v]) => v && typeof v.at === "number" && now - v.at < VIEWER_AGE_MS)
+    .sort((a, b) => a[1].at - b[1].at)
+    .slice(-VIEWER_CAP));
+}
+
+// Add or update one viewer. The registry is re-read and pruned immediately
+// before every write, so a close and a register that overlap lose at most an
+// entry the ack fallback can do without.
+function saveViewer(id, patch) {
+  const all = pruneViewers();
+  setShared(VIEWERS, { ...all, [id]: { at: Date.now(), ...all[id], ...patch } });
+}
+
+function forgetViewer(id) {
+  const all = pruneViewers();
+  if (!(id in all)) return;
+  const next = { ...all };
+  delete next[id];
+  setShared(VIEWERS, next);
+}
+
+// A viewer that did not answer a request is skipped for a short cooldown
+// rather than deleted: the copy may be alive in a hidden tab, where the view
+// command cannot reach it. Clearing the mark when it answers makes it a
+// candidate again at once.
+function quietMap() {
+  const now = Date.now(), all = shared(QUIET);
+  const map = all && typeof all === "object" ? all : {};
+  return Object.fromEntries(Object.entries(map)
+    .filter(([, at]) => typeof at === "number" && now - at < VIEWER_AGE_MS)
+    .slice(-VIEWER_CAP));
+}
+
+const isQuiet = (id) => {
+  const at = quietMap()[id];
+  return typeof at === "number" && Date.now() - at < VIEW_QUIET_MS;
+};
+
+function markQuiet(id) {
+  setShared(QUIET, { ...quietMap(), [id]: Date.now() });
+}
+
+function clearQuiet(id) {
+  const all = quietMap();
+  if (!(id in all)) return;
+  const next = { ...all };
+  delete next[id];
+  setShared(QUIET, next);
+}
+
+// Open viewers for this repository and machine, newest first, leaving out a
+// copy that recently failed to answer. A panel with no resolved root matches
+// nothing.
+const matchingViewers = (root, on) => root ? Object.entries(pruneViewers())
+  .filter(([id, v]) => !isQuiet(id) && v.root === root && (v.on ?? null) === (on ?? null))
+  .sort((a, b) => b[1].at - a[1].at) : [];
+
+// One acknowledgement per request token, kept short: two panels can have
+// requests in flight at once, and one key per token keeps them apart.
+function acknowledge(seq, id) {
+  const all = shared(ACK);
+  const next = { ...(all && typeof all === "object" ? all : {}), [seq]: id };
+  const keys = Object.keys(next);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete next[k];
+  setShared(ACK, next);
+}
+
+const acknowledged = (seq, id) => {
+  const all = shared(ACK);
+  return Boolean(all && typeof all === "object" && all[seq] === id);
+};
 
 const ago = (at) => {
   if (!at) return "";
@@ -72,17 +181,27 @@ const showArchive = (c, self) => !self.busy || self.busy === c.name;
 
 // The row's right-click menu: what each item does with the change's name.
 // More items append here; the popup renders them in order. Items take
-// (name, cx, at) where `at` is { root, on }: the repository root and machine
-// the panel had resolved when the menu opened (null when it found none).
+// (name, cx, at) where `at` is { root, on, panel }: the repository root and
+// machine the panel had resolved when the menu opened (null when it found
+// none), and the panel copy that can act on the request after this popup's
+// own cx has gone.
 const MENU = [
   { label: "Copy name", run: (name, cx) => {
     cx.write_to_clipboard(name);
     notify({ title: "Name copied", body: name, level: "success" });
   } },
-  { label: "View change", run: (name, cx, at) => {
+  { label: "View change", run: (name, _cx, at) => {
     if (!at?.root) { notify({ title: "No repository yet", body: "The panel is still finding this folder", level: "error" }); return; }
-    run("pane.split", { direction: "right", mod: "openspec",
-      props: { file: `${at.root}/openspec/changes/${name}/proposal.md`, change: name, on: at.on ?? null } });
+    const file = `${at.root}/openspec/changes/${name}/proposal.md`;
+    // The list copy owns the acknowledgement wait (this popup stops when it
+    // closes), so it opens the pane or switches the viewer instead.
+    if (!at.panel) {
+      run("pane.split", { direction: "right", mod: "openspec",
+        props: { file, change: name, on: at.on ?? null } });
+      return;
+    }
+    setShared(openKey(at.panel), { panel: at.panel, name, root: at.root, on: at.on ?? null, seq: uid() });
+    run("openspec.open");
   } },
 ];
 
@@ -153,6 +272,7 @@ function stateOf(c) {
   if (c.total - c.done <= 2) return "nearly";
   return "progress";
 }
+
 
 // The visible list: the filter (name substring, case-insensitive) applied,
 // then the chosen sort. openspec's order is already recent-first; "state"
@@ -422,16 +542,34 @@ export default class OpenSpec extends View {
       this.specsLoading = false;
       this.tasksText = null; // the compare-and-swap snapshot of tasks.md
       this.toggling = false;
+      this.toggleToken = 0;
       this.generation = 0;
+      this.viewerId = uid();
+      this.seenSeq = null; // the last retarget token this copy handled
+      this.refreshTask = null;
+      this.closed = false;
+      saveViewer(this.viewerId, { file: this.file, root: repoOf(this.dir), on: this.machine });
       this.loadArtifacts(cx);
-      if (this.machine) cx.timer.every(15000, (cx) => this.loadArtifacts(cx));
-      else this.watchChange(cx);
+      this.armRefresh(cx);
+      cx.spawn(async (cx) => {
+        for (;;) {
+          let command;
+          try { command = await nextCommand(); }
+          catch { return; }
+          try { if (command === "view") this.followView(cx); }
+          catch { /* one bad wake must not end retargeting for this copy */ }
+        }
+      });
       return;
     }
     this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.toggling = null;
     this.root = null; this.on = null; this.watched = null;
     this.error = null; this.loading = false;
     this.busy = null; this.confirming = null; this.confirmUntil = 0;
+    this.panelId = uid(); // names this copy in the row menu's open request
+    this.viewToken = 0;   // invalidates an earlier request's acknowledgement wait
+    this.handledOpen = null;
+    this.closed = false;
     this.sort = localStorage.getItem("sort") ?? "recent";
     if (!SORTS.some((s) => s.id === this.sort)) this.sort = "recent";
     this.filter = "";
@@ -441,6 +579,15 @@ export default class OpenSpec extends View {
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
     this.refresh(cx);
     cx.timer.every(15000, (cx) => this.refresh(cx));
+    cx.spawn(async (cx) => {
+      for (;;) {
+        let command;
+        try { command = await nextCommand(); }
+        catch { return; }
+        try { if (command === "open") this.acceptOpen(cx); }
+        catch { /* one bad wake must not end menu handling for this copy */ }
+      }
+    });
   }
 
   // Live updates between polls. watchFolder is local-only, so skip remote spaces.
@@ -506,6 +653,59 @@ export default class OpenSpec extends View {
   // Reset to an empty, explained panel (no repo, no openspec, a failed run).
   stale(text) { this.root = null; this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.error = text; }
 
+  // The row menu's View change: the popup asked this panel (by id) to act,
+  // because the popup's cx ends when the menu closes. Only the named copy
+  // handles the request; a second panel for the same repository ignores it.
+  acceptOpen(cx) {
+    if (this.closed) return;
+    const req = shared(openKey(this.panelId));
+    if (!req || req.panel !== this.panelId || req.seq === this.handledOpen) return;
+    this.handledOpen = req.seq;
+    this.requestViewer(req.name, cx, { root: req.root ?? null, on: req.on ?? null, openIfNone: true });
+  }
+
+  // Ask an open viewer for this repository and machine to show `name`, trying
+  // the newest one first. Every candidate is asked, even one already naming
+  // the file: a live viewer acks the same-change request without moving, and
+  // a stale entry cannot pass itself off as a viewer. One that does not
+  // acknowledge within VIEW_ACK_MS is skipped for a cooldown and the next is
+  // tried; a menu request opens a pane when no viewer is left, a row click
+  // never opens one. The token makes a newer click retire an earlier wait, so
+  // a stale timer cannot open a pane.
+  requestViewer(name, cx, { root, on, openIfNone }) {
+    if (!root || this.closed) return;
+    const file = `${root}/openspec/changes/${name}/proposal.md`;
+    const candidates = matchingViewers(root, on);
+    const token = ++this.viewToken;
+    const step = (i, cx) => {
+      if (token !== this.viewToken || this.closed) return;
+      const candidate = candidates[i];
+      if (!candidate) {
+        if (openIfNone) run("pane.split", { direction: "right", mod: "openspec",
+          props: { file, change: name, on: on ?? null } });
+        return;
+      }
+      const [id] = candidate;
+      const seq = uid();
+      // One slot per viewer, holding any requests still being delivered: two
+      // panels can ask the same viewer at once, and both must be answered.
+      const slot = shared(viewKey(id));
+      const pending = { ...(slot && typeof slot === "object" ? slot : {}),
+        [seq]: { id, seq, file, change: name, on: on ?? null } };
+      const keys = Object.keys(pending);
+      for (const k of keys.slice(0, Math.max(0, keys.length - 10))) delete pending[k];
+      setShared(viewKey(id), pending);
+      run("openspec.view");
+      cx.timer.after(VIEW_ACK_MS, (cx) => {
+        if (token !== this.viewToken || this.closed) return;
+        if (acknowledged(seq, id)) { clearQuiet(id); return; }
+        markQuiet(id);
+        step(i + 1, cx);
+      });
+    };
+    step(0, cx);
+  }
+
   async loadTasks(name, context) {
     const root = this.root, on = this.on;
     if (!root) return;
@@ -518,13 +718,92 @@ export default class OpenSpec extends View {
   // The viewer's refresh: local panes watch the change's own folder
   // (watchFolder recurses on macOS/Windows, so spec deltas are covered);
   // remote panes and a watch that can't arm fall back to the 15-second poll,
-  // like the panel's own remote rule.
-  watchChange(cx) {
-    const dir = this.dir.replace(/\/$/, "") || "/";
-    cx.spawn(async (cx) => {
-      try { for (;;) { await watchFolder(dir); await this.loadArtifacts(cx); } }
-      catch { cx.timer.every(15000, (cx) => this.loadArtifacts(cx)); }
+  // like the panel's own remote rule. The task is kept so a switch to another
+  // change can cancel it; the loop also exits when its dir is no longer ours.
+  armRefresh(cx) {
+    this.stopRefresh();
+    const dir = this.dir, at = dir.replace(/\/$/, "") || "/";
+    if (this.machine) {
+      this.refreshTask = cx.timer.every(15000, (cx) => { if (this.dir === dir) this.loadArtifacts(cx); });
+      return;
+    }
+    this.refreshTask = cx.spawn(async (cx) => {
+      try {
+        while (this.dir === dir) {
+          await watchFolder(at);
+          if (this.dir !== dir) return;
+          await this.loadArtifacts(cx);
+        }
+      } catch {
+        if (this.dir === dir) this.refreshTask = cx.timer.every(15000, (cx) => { if (this.dir === dir) this.loadArtifacts(cx); });
+      }
     });
+  }
+
+  stopRefresh() {
+    this.refreshTask?.cancel();
+    this.refreshTask = null;
+  }
+
+  // The viewer's `view` command: read every request queued for this copy,
+  // acknowledge each before switching so the panel knows this copy answered,
+  // and ignore a token already handled or a request addressed to another
+  // copy. The last request in the slot is the one the copy lands on.
+  followView(cx) {
+    if (this.closed) return;
+    const slot = shared(viewKey(this.viewerId));
+    if (!slot || typeof slot !== "object") return;
+    const reqs = Object.values(slot).filter((r) =>
+      r && r.id === this.viewerId && r.seq !== this.seenSeq && typeof r.file === "string" && r.file);
+    if (!reqs.length) return;
+    for (const r of reqs) acknowledge(r.seq, this.viewerId);
+    clearQuiet(this.viewerId);
+    const req = reqs[reqs.length - 1];
+    this.seenSeq = req.seq;
+    const left = Object.fromEntries(Object.entries(slot).filter(([, r]) => !reqs.includes(r)));
+    setShared(viewKey(this.viewerId), Object.keys(left).length ? left : null);
+    if (req.file === this.file) return; // already showing it
+    this.switchTo(req, cx);
+  }
+
+  // Show another change in this pane. The saved props stay the original
+  // anchor; the old change's state is cleared, its reads invalidated and its
+  // watch cancelled, then the new change is read and watched in place.
+  switchTo(req, cx) {
+    if (this.closed) return;
+    this.generation++;
+    this.file = req.file;
+    this.dir = this.file.replace(/[^/]*$/, "");
+    this.change = typeof req.change === "string" && req.change ? req.change
+      : (this.file.split("/").filter(Boolean).at(-2) ?? "Proposal");
+    this.machine = req.on ?? null;
+    this.docs = { proposal: blankDoc(), design: blankDoc(), tasks: blankDoc() };
+    this.specs = { items: [], error: null };
+    this.specsLoading = false;
+    this.tasksText = null;
+    this.toggling = false;
+    this.toggleToken++; // a tick in flight for the old change cannot land here
+    this.tabsAvailable = ["proposal"];
+    this.tab = "proposal";
+    saveViewer(this.viewerId, { file: this.file, root: repoOf(this.dir), on: this.machine });
+    this.armRefresh(cx);
+    this.loadArtifacts(cx);
+    cx.notify();
+  }
+
+  // The copy's one final call: a closing viewer must leave the registry, and
+  // the request slots it owned go too, or the next View change would wait on
+  // a copy that is gone.
+  close(_cx) {
+    this.closed = true;
+    if (this.viewerId) {
+      this.stopRefresh();
+      forgetViewer(this.viewerId);
+      clearQuiet(this.viewerId);
+      setShared(viewKey(this.viewerId), null);
+    } else if (this.panelId) {
+      setShared(openKey(this.panelId), null);
+    }
   }
 
   // One artifact file, probe and read in one call: null = absent.
@@ -660,6 +939,7 @@ export default class OpenSpec extends View {
     this.tasksText = snapshot;
     this.docs.tasks.text = optimistic;
     this.toggling = true;
+    const file = this.file, token = ++this.toggleToken;
     cx.notify();
     cx.spawn(async (cx) => {
       let body = snapshot, settled = null, why = "";
@@ -679,23 +959,33 @@ export default class OpenSpec extends View {
           }
         }
       } catch (e) { why = String(e); if (settled === null) settled = body; }
-      if (typeof settled === "string") {
+      // The pane may have switched changes while the write was in flight: the
+      // write stays with the change it was clicked in, and its result only
+      // lands here when this tab still belongs to that change.
+      const mine = this.file === file && this.toggleToken === token;
+      if (mine && typeof settled === "string") {
         this.tasksText = settled;
         this.docs.tasks.text = settled;
         this.docs.tasks.error = null;
       }
-      this.toggling = false;
       if (why) notify({ title: "Task not updated", body: why, level: "error" });
-      await this.loadArtifacts(cx); // adopt the file's real state either way
-      cx.notify();
+      if (mine) {
+        this.toggling = false;
+        await this.loadArtifacts(cx); // adopt the file's real state either way
+        cx.notify();
+      }
     });
   }
 
   pick(name, cx) {
-    this.open = this.open === name ? null : name;
+    const opening = this.open !== name;
+    this.open = opening ? name : null;
     this.tasks = [];
     this.tasksText = null;
     this.confirming = null;
+    // Opening a row also shows it in the open viewer (same repository and
+    // machine); folding a row away leaves the viewer where it is.
+    if (opening && this.root) this.requestViewer(name, cx, { root: this.root, on: this.on, openIfNone: false });
     const context = this.context;
     if (this.open) cx.spawn(async (cx) => {
       try { await this.loadTasks(this.open, context); }
@@ -797,7 +1087,7 @@ export default class OpenSpec extends View {
         .when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(c.name, cx))
         .on_mouse_down("right", (_e, cx) => {
           cx.stop_propagation();
-          openOverlay({ mod: "openspec", kind: "popup", width: 200, height: 240, props: { menuFor: c.name, root: this.root, on: this.on } });
+          openOverlay({ mod: "openspec", kind: "popup", width: 200, height: 240, props: { menuFor: c.name, root: this.root, on: this.on, panel: this.panelId } });
         })
         .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(complete ? t.done : t.foreground).child(c.name))
         .when(c.total > 0, (e) => e.child(div().text_size(11).text_color(complete ? t.done : t.muted).child(`${c.done}/${c.total}`)))
@@ -836,7 +1126,7 @@ export default class OpenSpec extends View {
     const choose = (i, cx) => {
       const it = MENU[i];
       if (!it) return;
-      it.run(name, cx, { root: props().root ?? null, on: props().on ?? null }); // while the popup (and its cx) is still alive
+      it.run(name, cx, { root: props().root ?? null, on: props().on ?? null, panel: props().panel ?? null }); // while the popup (and its cx) is still alive
       closeOverlay(props().overlay);
     };
     return v_flex().id("openspec-menu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(12.8)

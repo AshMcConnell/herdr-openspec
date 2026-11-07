@@ -22,7 +22,10 @@ change's name on the clipboard (`write_to_clipboard`; a toast confirms), and
 **View change** opens the whole change as a tabbed viewer beside the work —
 proposal, design, tasks and specs, one tab for each artifact the change has,
 with the tasks tab's checklist ticking checkboxes in `tasks.md` (this
-machine only).
+machine only). A further **View change** switches the newest open viewer for
+the same repository and machine instead of adding a pane, and opens a new
+pane only when no viewer answers; clicking another row switches that viewer
+too and never opens one.
 It reads
 the repository of the focused pane — else any pane with a folder in the
 active space, else the space's folder — running `openspec` there, on its
@@ -56,7 +59,10 @@ It shows itself four ways:
   read-only). When every task is done the viewer reads green — its name, the
   selected tab, a `✓ complete` chip and the checklist. Normally opened from
   the row menu's **View change**; the props are saved with the tab, so the
-  pane survives restarts.
+  pane survives restarts. An already-open viewer (newest for the same
+  repository and machine) is switched in place by a row click or another
+  **View change**; its saved props still name the change it was opened on,
+  so a restart returns it there.
 
 ## What it runs
 
@@ -80,7 +86,12 @@ work (`pane.split` with `{file, change, on}` props) and reads the change's
 artifacts with `readTextFile` (on the pane's machine for remote spaces): a
 folder watch on the change's own folder keeps a local pane current —
 `specs/` included — and remote panes poll every 15 seconds (as does a watch
-that cannot arm).
+that cannot arm). List and viewer copies address each other through Herdr's
+shared values (`openspec.viewers`, per-viewer `openspec.view.<id>`,
+`openspec.view.ack`, `openspec.view.quiet` and per-panel
+`openspec.open.<panel>`) and the mod's own `view` / `open` commands, so an
+open viewer is switched in place rather than duplicated. Those are the same
+kind of command every mod key binding uses; no programs are started.
 
 Nothing else: no shell, no network. `readTextFile` reads the expanded
 change's `tasks.md`, and a task click writes it back with `writeTextFile`:

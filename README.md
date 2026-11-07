@@ -10,13 +10,15 @@ the mod's specified behaviour.
 ![OpenSpec docked in the side panel](preview-panel.png)
 
 Click a change to fold out its task list from `tasks.md`; click a task to
-tick or untick it there. Press the box button to archive a change
+tick or untick it there. With a change viewer open, clicking another change
+switches the viewer to it too. Press the box button to archive a change
 (`openspec archive`, confirmed twice, reported by toast). Right-click a
 change for a small menu — **Copy name**, and **View change**, which opens
 the whole change beside your work in a tabbed viewer: **proposal**,
 **design**, **tasks** and **specs**, one tab for each artifact it has, all
 in Tokyo Night (the Obsidian theme), drawn by the mod's own markdown
-renderer, with a click-to-tick checklist on the tasks tab. The list follows
+renderer, with a click-to-tick checklist on the tasks tab. Another **View
+change** switches that open viewer instead of adding a pane. The list follows
 the repository of the terminal you're focused on — including spaces that
 live on another machine.
 
@@ -43,19 +45,23 @@ live on another machine.
   on the clipboard and a toast confirms it, and **View change** opens a
   pane to the right showing the whole change as tabs: **proposal**,
   **design**, **tasks** and **specs**, only for artifacts the change has.
-  Every body is rendered in Tokyo Night colours by the mod's own markdown
-  renderer (the change's name leads as a title; scrollable, padded;
-  not text-selectable), the tasks tab is a checklist you can tick from —
-  the panel's compare-and-swap write, local panes only — and the footer
-  names the change's directory. A change with every task done turns green:
-  its name, the selected tab and a **✓ complete** chip. It works for remote
-  spaces too. Built to take more items later.
+  When a viewer for this repository and machine is already open, **View
+  change** switches the most recently opened one instead of adding a pane;
+  a pane opens only when no viewer answers. Every body is rendered in Tokyo
+  Night colours by the mod's own markdown renderer (the change's name leads
+  as a title; scrollable, padded; not text-selectable), the tasks tab is a
+  checklist you can tick from — the panel's compare-and-swap write, local
+  panes only — and the footer names the change's directory. A change with
+  every task done turns green: its name, the selected tab and a **✓
+  complete** chip. It works for remote spaces too. Built to take more items
+  later.
 - **Expanded**: the change's task list — ✓ for done, ○ for open, under its
   `tasks.md` section headings. Click a task to toggle its box in `tasks.md`:
   the row flips at once and the counts follow when the new file is read back
-  (this machine only — remote spaces can look, not tick). Rows truncate to
-  the panel; the full text shows on hover. Click the change again to fold it
-  away.
+  (this machine only — remote spaces can look, not tick). Opening a change's
+  row also switches an open viewer to that change; clicking the open row
+  again only folds the tasks away. Rows truncate to the panel; the full text
+  shows on hover. Click the change again to fold it away.
 - **Archive** (the box button): first click turns it into a red
   **Archive?** chip; second click runs `openspec archive <name> --yes`. It
   cancels if you click anything else or wait a few seconds. While it runs the
@@ -73,7 +79,8 @@ covers remote machines (the folder watch is local-only), and switching
 spaces or panes re-reads at once.
 An open change viewer watches the change's own folder the same way, so edits
 to any artifact — `specs/<capability>/spec.md` included — show up as they
-happen; remote viewers poll every 15 seconds.
+happen; remote viewers poll every 15 seconds. Switching a viewer to another
+change moves its watch to that change's folder.
 It runs `openspec list --json` in the focused repository — on its machine for
 remote spaces, the same way Herdr's own panels run `git`.
 
@@ -154,6 +161,11 @@ remote alike) and otherwise adds no programs: it reads `proposal.md`,
 `design.md` and `tasks.md` with Herdr's file reader (on the change's machine
 for remote spaces) and opens itself with `pane.split`.
 
+The list and viewer copies find each other through Herdr's shared values
+(`openspec.viewers`, per-viewer `openspec.view.<id>`, `openspec.view.ack`,
+`openspec.view.quiet` and per-panel `openspec.open.<panel>`) and the mod's
+own `view` and `open` commands — no new programs, no files and no network.
+
 ## Limits
 
 - **Archive skips OpenSpec's prompts** (`--yes`), because the mod can't
@@ -169,10 +181,16 @@ for remote spaces) and opens itself with `pane.split`.
 - **The filter matches change names** — not task text or specs.
 - **"Nearly done" means at most 2 tasks remain** — a fixed threshold, not a
   percentage; state chips and the state grouping use it.
-- **Every View change click opens another pane** — no de-duplication.
-  Remote change viewers poll every 15 seconds, reads are capped at 1 MiB,
-  and a pane whose change was archived falls back to the proposal tab's
-  *No proposal.md* until closed.
+- **Viewer switching follows the newest viewer for the same repository and
+  machine** — a row click or **View change** retargets it; viewers for
+  another repository, another machine, or an older one are left alone. The
+  panel waits 700 ms for the viewer's acknowledgement; a viewer that does not
+  answer is skipped for 15 seconds, and **View change** opens a pane if no
+  other viewer answers (a row click never opens one). Switching lasts for the
+  session: the pane's saved props still name the change it was opened on, so
+  a Herdr restart returns it there. Remote change viewers poll every 15
+  seconds, reads are capped at 1 MiB, and a pane whose change was archived
+  falls back to the proposal tab's *No proposal.md* until closed.
 - **Remote tasks are read-only** — the viewer's checklist renders but a
   click writes nothing (the file writer is local-only).
 - **The change viewer's palette is fixed** — Tokyo Night dark (the owner's
