@@ -3,15 +3,16 @@
 // so a ticked task or a new change shows up at once (local spaces only; remote
 // spaces fall back to a 15-second poll). Click a change to fold out its task
 // list from tasks.md; click a task to tick or untick it in the file itself
-// (local only); right-click it for a small menu (Copy name); the box button
-// archives it (openspec archive --yes).
+// (local only); right-click it for a small menu (Copy name; View proposal
+// opens the change's proposal.md as a markdown pane beside the work); the box
+// button archives it (openspec archive --yes).
 //
 // Lives at ~/.config/herdr-app/mods/openspec/.
 // https://github.com/AshMcConnell/herdr-openspec — MIT license.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify } from "herdr";
+import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
+import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
 // focused pane's live folder, else any pane with one in the active space (any
@@ -67,11 +68,18 @@ function toggled(text, line, task, to) {
 const showArchive = (c, self) => !self.busy || self.busy === c.name;
 
 // The row's right-click menu: what each item does with the change's name.
-// More items append here; the popup renders them in order.
+// More items append here; the popup renders them in order. Items take
+// (name, cx, at) where `at` is { root, on }: the repository root and machine
+// the panel had resolved when the menu opened (null when it found none).
 const MENU = [
   { label: "Copy name", run: (name, cx) => {
     cx.write_to_clipboard(name);
     notify({ title: "Name copied", body: name, level: "success" });
+  } },
+  { label: "View proposal", run: (name, cx, at) => {
+    if (!at?.root) { notify({ title: "No repository yet", body: "The panel is still finding this folder", level: "error" }); return; }
+    run("pane.split", { direction: "right", mod: "openspec",
+      props: { file: `${at.root}/openspec/changes/${name}/proposal.md`, change: name, on: at.on ?? null } });
   } },
 ];
 
@@ -122,6 +130,21 @@ export default class OpenSpec extends View {
     this.at = 0; // the right-click menu's keyboard spot
     // The right-click menu popup: no list, no polls, no folder watch.
     if (typeof props()?.menuFor === "string") { this.handle.focus(); return; }
+    // The proposal viewer pane (pane.split {mod, props:{file,...}}): reads one
+    // file from its props — no list, no location(), nothing that follows focus,
+    // so a pane saved with its tab works on its own after a restart.
+    if (typeof props()?.file === "string") {
+      this.file = props().file;
+      this.change = typeof props()?.change === "string" ? props().change
+        : (this.file.split("/").filter(Boolean).at(-2) ?? "Proposal");
+      this.machine = props()?.on ?? null;
+      this.text = undefined; // undefined = loading, null = no proposal.md, string = read
+      this.error = null;
+      this.load(cx);
+      if (this.machine) cx.timer.every(15000, (cx) => this.load(cx));
+      else this.watchProposal(cx);
+      return;
+    }
     this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.toggling = null;
     this.root = null; this.on = null; this.watched = null;
     this.error = null; this.loading = false;
@@ -207,6 +230,27 @@ export default class OpenSpec extends View {
     if (key() !== context || this.open !== name) return;
     this.tasks = text === null ? null : taskRows(text);
     this.tasksText = text;
+  }
+
+  // The viewer's refresh: local panes watch the change's own folder
+  // (watchFolder is local-only); remote panes and a watch that can't arm
+  // fall back to the 15-second poll, like the panel's own remote rule.
+  watchProposal(cx) {
+    const dir = this.file.replace(/[^/]*$/, "");
+    cx.spawn(async (cx) => {
+      try { for (;;) { await watchFolder(dir); this.load(cx); } }
+      catch { cx.timer.every(15000, (cx) => this.load(cx)); }
+    });
+  }
+
+  async load(cx) {
+    const file = this.file;
+    try {
+      const text = await readTextFile(file, { on: this.machine });
+      if (this.file !== file) return;
+      this.text = text; this.error = null;   // null = absent
+    } catch (e) { if (this.file === file) this.error = String(e); }
+    cx.notify();
   }
 
   pick(name, cx) {
@@ -315,7 +359,7 @@ export default class OpenSpec extends View {
         .when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(c.name, cx))
         .on_mouse_down("right", (_e, cx) => {
           cx.stop_propagation();
-          openOverlay({ mod: "openspec", kind: "popup", width: 200, height: 240, props: { menuFor: c.name } });
+          openOverlay({ mod: "openspec", kind: "popup", width: 200, height: 240, props: { menuFor: c.name, root: this.root, on: this.on } });
         })
         .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(complete ? t.done : t.foreground).child(c.name))
         .when(c.total > 0, (e) => e.child(div().text_size(11).text_color(complete ? t.done : t.muted).child(`${c.done}/${c.total}`)))
@@ -354,7 +398,7 @@ export default class OpenSpec extends View {
     const choose = (i, cx) => {
       const it = MENU[i];
       if (!it) return;
-      it.run(name, cx); // while the popup (and its cx) is still alive
+      it.run(name, cx, { root: props().root ?? null, on: props().on ?? null }); // while the popup (and its cx) is still alive
       closeOverlay(props().overlay);
     };
     return v_flex().id("openspec-menu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(12.8)
@@ -382,9 +426,31 @@ export default class OpenSpec extends View {
     cx.notify();
   }
 
+  // The viewer pane: the change's name and a proposal.md chip over the file
+  // rendered as markdown (selectable, its own scroll), the machine-prefixed
+  // path in a footer — the panel's own header/footer style.
+  proposalView(t) {
+    const where = `${this.machine ? `${this.machine}: ` : ""}${this.file}`;
+    return v_flex().id("openspec-proposal").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
+      .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
+      .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
+        .child(div().flex_1().min_w(0).truncate().font_semibold().child(this.change))
+        .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).flex_none().child("proposal.md")))
+      .child(v_flex().flex_1().min_h(0)
+        .when(this.error, (e) => e.child(div().p(10).text_color(t.dim).child(this.error)))
+        .when(!this.error && this.text === undefined, (e) => e.child(div().p(10).text_color(t.dim).child("Loading proposal…")))
+        .when(!this.error && this.text === null, (e) => e.child(div().p(10).text_color(t.dim).child("No proposal.md — this change has none")))
+        .when(!this.error && this.text === "", (e) => e.child(div().p(10).text_color(t.dim).child("proposal.md is empty")))
+        .when(!this.error && typeof this.text === "string" && this.text.length > 0, (e) =>
+          e.child(TextView.markdown("openspec-proposal-text", this.text).flex_1().min_h(0).selectable().scrollable())))
+      .child(h_flex().flex_none().h(26).px(12).items_center().border_t(1).border_color(t.border)
+        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(where)));
+  }
+
   render(cx) {
     const t = theme();
     if (typeof props()?.menuFor === "string") return this.menuView(t);
+    if (typeof props()?.file === "string") return this.proposalView(t);
     if (key() !== this.context) this.refresh(cx);
     const rows = visible(this);
     const done = rows.reduce((n, c) => n + c.done, 0), total = rows.reduce((n, c) => n + c.total, 0);

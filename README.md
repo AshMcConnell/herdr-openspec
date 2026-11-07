@@ -12,7 +12,9 @@ the mod's specified behaviour.
 Click a change to fold out its task list from `tasks.md`; click a task to
 tick or untick it there. Press the box button to archive a change
 (`openspec archive`, confirmed twice, reported by toast). Right-click a
-change for a small menu — **Copy name**. The list follows the repository of
+change for a small menu — **Copy name**, and **View proposal**, which opens
+the change's `proposal.md` rendered as markdown in a pane beside your work.
+The list follows the repository of
 the terminal you're focused on — including spaces that live on another
 machine.
 
@@ -36,7 +38,10 @@ machine.
   and when the change was last touched. Rows sort most recent first,
   as `openspec list` does.
 - **Right-click a row**: a small menu — **Copy name** puts the change's name
-  on the clipboard and a toast confirms it. Built to take more items later.
+  on the clipboard and a toast confirms it, and **View proposal** opens a
+  pane to the right showing the change's `proposal.md` as rendered markdown
+  (selectable and scrollable), with the change's name and the file's path;
+  it works for remote spaces too. Built to take more items later.
 - **Expanded**: the change's task list — ✓ for done, ○ for open, under its
   `tasks.md` section headings. Click a task to toggle its box in `tasks.md`:
   the row flips at once and the counts follow when the new file is read back
@@ -58,6 +63,8 @@ it creates appears right away — ticking a task from the panel proves it:
 the same watch carries its own write back into the counts. A 15-second poll
 covers remote machines (the folder watch is local-only), and switching
 spaces or panes re-reads at once.
+An open proposal pane follows edits to `proposal.md` the same way — a folder
+watch locally, a 15-second poll on remote machines.
 It runs `openspec list --json` in the focused repository — on its machine for
 remote spaces, the same way Herdr's own panels run `git`.
 
@@ -133,6 +140,10 @@ this machine. It never runs a shell: every call is an argument list, and
 change names come from `openspec list`, never typed input. Nothing goes to
 the network.
 
+The **View proposal** viewer adds no programs: it reads `proposal.md` with
+Herdr's file reader (on the change's machine for remote spaces) and opens
+itself with `pane.split`.
+
 ## Limits
 
 - **Archive skips OpenSpec's prompts** (`--yes`), because the mod can't
@@ -148,6 +159,9 @@ the network.
 - **The filter matches change names** — not task text or specs.
 - **"Nearly done" means at most 2 tasks remain** — a fixed threshold, not a
   percentage; state chips and the state grouping use it.
+- **Every View proposal click opens another pane** — no de-duplication.
+  Remote proposal panes poll every 15 seconds, reads are capped at 1 MiB,
+  and a pane whose change was archived shows *No proposal.md* until closed.
 
 ## License
 

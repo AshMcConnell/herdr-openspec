@@ -18,7 +18,9 @@ row's full text); clicking a task ticks or unticks its checkbox in
 archives that change: first click turns it into a red "Archive?" chip, the
 second runs `openspec archive <name> --yes` and reports by toast.
 Right-click a row for a small menu of its own: **Copy name** puts the
-change's name on the clipboard (`write_to_clipboard`; a toast confirms).
+change's name on the clipboard (`write_to_clipboard`; a toast confirms), and
+**View proposal** opens the change's `proposal.md` as a markdown pane beside
+the work.
 It reads
 the repository of the focused pane — else any pane with a folder in the
 active space, else the space's folder — running `openspec` there, on its
@@ -26,7 +28,7 @@ machine for remote spaces.
 
 ![OpenSpec docked in the side panel](preview-panel.png)
 
-It shows itself three ways:
+It shows itself four ways:
 
 - **A side panel** like Files/Changes when a layout puts it in a block
   (`"content": { "mod": "openspec" }`), or docks it: with
@@ -40,6 +42,12 @@ It shows itself three ways:
   `"cmd-alt-o": "mod.open:openspec"` binds a key.
 - **A pane**: `herdr-app do pane.split '{"direction":"right","mod":"openspec"}'`.
   A `"props":{"folder":"/path/to/repo"}` pins it to one repository.
+- **A proposal viewer**: the same pane split with
+  `"props":{"file":"/path/to/repo/openspec/changes/<name>/proposal.md","change":"<name>","on":null}`
+  shows the same mod as a viewer for that one `proposal.md` — headings,
+  bullets and code rendered as markdown, selectable and scrollable
+  (normally opened from the row menu's **View proposal**; the props are
+  saved with the tab, so the pane survives restarts).
 
 ## What it runs
 
@@ -54,6 +62,13 @@ It shows itself three ways:
   when git fails).
 
 The row menu's copy uses the app's clipboard directly — not a command.
+
+The row menu's **View proposal** opens the same mod as a pane beside the
+work (`pane.split` with `{file, change, on}` props) and reads nothing but
+its own `proposal.md` with `readTextFile` (on the pane's machine for remote
+spaces): a folder watch on the change's own folder keeps a local pane
+current, and remote panes poll every 15 seconds (as does a watch that
+cannot arm).
 
 Nothing else: no shell, no network. `readTextFile` reads the expanded
 change's `tasks.md`, and a task click writes it back with `writeTextFile`:
