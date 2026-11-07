@@ -176,16 +176,15 @@ function visible(self) {
 // Block cap for a pathological file; proposals are a few KB.
 const MAX_MD_BLOCKS = 2000;
 
-// Heading text sizes on the 15px reading size. The theme leaves sizes to
-// Obsidian's defaults, which are tuned for a full editor window. This ladder
-// is steeper than that: every step is at least 1px so the hierarchy reads at
-// a glance (an earlier 1–2px-per-step ladder rendered same-looking headers).
-// The pane's title (the change's name) takes MD_HEAD[0] too, so a body `#`
-// matches it — deliberate: `#` is rare in proposals and the title should
-// lead. h6 at 14px sits just under body size; its magenta does the rest.
+// Heading text sizes on the 15px reading size, at roughly Obsidian's em
+// proportions (1.8/1.5/1.34/1.2/1.1/1.0em): H1 at document scale — the pane's
+// title takes MD_HEAD[0] too and grows with it. `mt` is the extra top margin
+// for big headings (on top of the block gap) so they don't sit glued to the
+// previous paragraph. Colours come from NIGHT_MD.h.
 const MD_HEAD = [
-  { size: 24, lh: "32px" }, { size: 20, lh: "27px" }, { size: 17.5, lh: "24px" },
-  { size: 16, lh: "22px" }, { size: 15, lh: "21px" }, { size: 14, lh: "20px" },
+  { size: 30, lh: "40px", mt: 14 }, { size: 22.5, lh: "30px", mt: 10 },
+  { size: 19, lh: "26px", mt: 6 }, { size: 16.5, lh: "22px", mt: 2 },
+  { size: 15, lh: "21px", mt: 2 }, { size: 14, lh: "20px", mt: 2 },
 ];
 
 // proposal.md -> { blocks, truncated }. Blocks are {kind:"h",level,text},
@@ -346,7 +345,7 @@ function mdView(text, title) {
       const head = MD_HEAD[b.level - 1];
       out.push(h_flex().flex_wrap().items_baseline().flex_none().text_size(head.size)
         .line_height(head.lh).text_color(NIGHT_MD.h[b.level - 1]).font_bold()
-        .when(i > 0, (e) => e.mt(6))
+        .when(i > 0, (e) => e.mt(head.mt))
         .children(mdRuns(mdInline(b.text), key, head.size)));
     } else if (b.kind === "code") {
       const box = v_flex().flex_none().mt(2).rounded(6).bg(NIGHT_MD.codeBg)
