@@ -21,7 +21,7 @@ A copy of the mod given a `file` prop SHALL render the change viewer instead of 
 
 ### Requirement: Viewer content
 
-The viewer SHALL show a tab bar with **proposal**, **design**, **tasks** and **specs**, one tab for each artifact the change has: the proposal tab SHALL always be present as the anchor, the design and tasks tabs SHALL appear only when their files exist, and the specs tab only when the change has delta specs. The body SHALL show the selected tab's artifact — the change's name as its H1-style title and the artifact rendered per its kind — and a footer SHALL carry the machine-prefixed change directory, omitted when the path is empty. The tab bar SHALL replace the previous header and its `proposal.md` chip.
+The viewer SHALL show a tab bar with **proposal**, **design**, **tasks** and **specs**, one tab for each artifact the change has: the proposal tab SHALL always be present as the anchor, the design and tasks tabs SHALL appear only when their files exist, and the specs tab only when the change has delta specs, or when a remote listing failed, in which case the tab says so. The body SHALL show the selected tab's artifact — for the document tabs (proposal, design, specs) the change's name as its H1-style title above the artifact, with the artifact rendered per its kind — and a footer SHALL carry the machine-prefixed change directory, omitted when the path is empty. The tab bar SHALL replace the previous header and its `proposal.md` chip.
 
 #### Scenario: Tabs for what exists
 
@@ -40,7 +40,7 @@ The viewer SHALL show a tab bar with **proposal**, **design**, **tasks** and **s
 
 ### Requirement: Viewer states
 
-The viewer SHALL explain itself per artifact instead of showing a blank body: a loading line while an artifact's first read is in flight, "No proposal.md — this change has none" when the anchor file is absent (including after the change is archived under an open pane), "<file> is empty" for a zero-length artifact, and the error's text when a read throws. A tab whose artifact disappears SHALL fall back to the proposal tab.
+The viewer SHALL explain itself per artifact instead of showing a blank body: "Loading proposal…" while the proposal tab's first read is in flight, "Loading design.md…" and "Loading tasks.md…" for those tabs, and "Loading specs…" for the specs listing and reads; "No proposal.md — this change has none" when the anchor file is absent (including after the change is archived under an open pane), "<file> is empty" for a zero-length artifact, and the error's text when a read throws. A tab whose artifact disappears SHALL fall back to the proposal tab.
 
 #### Scenario: Change without a proposal
 
@@ -102,7 +102,8 @@ The change viewer SHALL paint every surface it draws — root, tab bar, footer, 
 Tokyo Night dark palette (the owner's Obsidian theme), held as constants in
 `main.js` — not the app theme's tokens and not a read of the vault's CSS:
 body background #1a1b26, header/footer chrome #16161e, borders #292e42,
-body text #c0caf5, muted text #a9b1d6, faint text #565f89, error text #db4b4b.
+body text #c0caf5, muted text #a9b1d6, faint text #565f89, error text #db4b4b,
+accent (`NIGHT.accent`) #bb9af7 — Tokyo Night's magenta, the selected tab's underline.
 A selected tab SHALL read in the body text colour with the accent, and an unselected tab in the muted colour. The body SHALL be rendered in #c0caf5 at reading size, and each element in it
 SHALL take its colour from the palette. The palette
 SHALL be fixed regardless of the app theme, and the change list SHALL keep
@@ -116,7 +117,7 @@ the app theme's tokens.
 #### Scenario: Tab colours
 
 - **WHEN** the bar draws its tabs
-- **THEN** the selected tab takes the body text colour with the accent, and the others the muted colour, hover brightening to the body text colour
+- **THEN** the selected tab takes the body text colour with a #bb9af7 accent underline, and the others the muted colour, hover brightening to the body text colour
 
 #### Scenario: Same in every app theme
 
@@ -136,7 +137,8 @@ and every rendered part SHALL take its colour from the theme.css-derived
 palette: headings h1–h6 in red/yellow/green/cyan/blue/magenta (--h1-color
 ..--h6-color), bold and italic cyan, links magenta (hover cyan, http(s)
 links clickable into the system browser), inline and fenced code on #242838
-with #c0caf5 text, blockquotes a #80d0ff left bar (Obsidian's default accent) over #16161e, rules
+with #c0caf5 text, blockquotes a #80d0ff left bar (the owner's Tokyo Night
+theme accent, `hsl(202,100%,75%)`; not Obsidian's default) over #16161e, rules
 #292e42. The renderer SHALL never drop content: syntax it does not support
 SHALL render as literal text — except that a document past 2000 blocks SHALL end in a faint "… truncated" line saying the rest is not shown. The change's name SHALL lead the body as a
 title in the H1 style. The body SHALL scroll inside its container
@@ -145,7 +147,7 @@ and SHALL be padded so the text does not touch the pane's edges.
 #### Scenario: Body elements carry their Tokyo Night colours
 
 - **WHEN** an artifact contains headings, links, inline code, blockquotes or fenced code blocks
-- **THEN** each is drawn in its palette colour — h1–h6 red/yellow/green/cyan/blue/magenta, links magenta, code chips and blocks on #242838, quotes a #80d0ff bar over #16161e, rules #292e42
+- **THEN** each is drawn in its palette colour — h1–h6 red/yellow/green/cyan/blue/magenta, links magenta, code chips and blocks on #242838, quotes a #80d0ff bar (the owner's theme accent) over #16161e, rules #292e42
 
 #### Scenario: The name is the title
 
@@ -155,7 +157,7 @@ and SHALL be padded so the text does not touch the pane's edges.
 #### Scenario: Unsupported syntax stays visible
 
 - **WHEN** the markdown holds syntax the renderer does not support (tables, images, nested lists beyond one level, unknown escapes)
-- **THEN** it renders as literal text lines — no content is dropped
+- **THEN** it renders as literal text lines within the rendered blocks — no content inside them is dropped (the 2000-block cap aside)
 
 #### Scenario: A document past the block cap
 
@@ -176,7 +178,7 @@ and SHALL be padded so the text does not touch the pane's edges.
 
 ### Requirement: Task tab
 
-The tasks tab SHALL render the change's `tasks.md` as a themed checklist built from the mod's task parser — section headings in the muted colour, ✓ in green for a done task, ○ in the faint colour for an open one, each task's text shown in full, untruncated and uncapped. On a local pane, clicking a task SHALL flip that checkbox line in the change's `tasks.md` with the panel's compare-and-swap write: the flip is optimistic, a stale snapshot is re-read and retried once, only one toggle runs at a time, and a failure reports by error toast naming the reason. Remote panes SHALL show the same checklist read-only.
+The tasks tab SHALL render the change's `tasks.md` as a themed checklist built from the mod's task parser — section headings in the muted colour, ✓ in green for a done task, ○ in the faint colour for an open one, each task's text not truncated to the row width and with no row cap (the panel's ellipsis and capped folded-out list are what the viewer lifts; the parser still drops wrapped continuation lines). On a local pane, clicking a task SHALL flip that checkbox line in the change's `tasks.md` with the panel's compare-and-swap write: the flip is optimistic, a stale snapshot is re-read and retried once, only one toggle runs at a time, and a failure reports by error toast naming the reason. Remote panes SHALL show the same checklist read-only.
 
 #### Scenario: Tick from the viewer
 

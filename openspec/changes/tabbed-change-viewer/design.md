@@ -51,6 +51,11 @@ Windows, so watching the change's own directory covers `specs/`.
 
 ## Decisions
 
+**Naming note:** the `context-menu` requirement's title stays **View proposal
+item** even though the item becomes **View change**. MODIFIED delta headers
+must match the merged spec character-exactly or `openspec archive` refuses the
+delta, so the title is knowingly left alone — do not "fix" it at apply time.
+
 ### D1 — `file` stays the anchor prop
 
 The viewer keeps `file` as the only anchor it needs. The change's directory
@@ -80,7 +85,9 @@ Discovery runs in one pass and re-runs on every refresh:
 - The three single files are probed with `readTextFile(path, {on})` — the
   same call the body needs anyway, so a probe and a read are one operation
   (`null` = absent). That works identically local and remote.
-- The specs listing is `readdir(changeDir + "/specs")` locally, or
+- The specs listing is `readdir(changeDir + "/specs")` locally, keeping only
+  the entries that actually contain a `spec.md` (a `readTextFile` probe per
+  capability, local), or
   `exec("find", [specsDir, "-name", "spec.md"], {on})` on a remote machine.
   Results are sorted by capability name and de-duplicated. An exec failure
   means "no specs content" plus a note — it must never break the viewer.
@@ -104,10 +111,13 @@ directory that disappears entirely.
   read of that artifact) and notifies, and `set_position(i + 1, n)` for its
   place among `n` tabs.
 - The mod draws the visuals on NIGHT colours because the components carry
-  none: selected `NIGHT.fg` with an accent underline, unselected
-  `NIGHT.muted`, hover `NIGHT.fg`.
+  none: selected `NIGHT.fg` with a `NIGHT.accent` (`#bb9af7`, the Tokyo Night
+  magenta) underline, unselected `NIGHT.muted`, hover `NIGHT.fg`. The accent
+  is a palette constant like the rest — no app-theme token.
 - The bar replaces the old 42 px header (`NIGHT.bgAlt`, bottom border). The
-  old `proposal.md` chip retires — the tabs say which artifact is showing.
+  old `proposal.md` chip retires — the tabs say which artifact is showing,
+  and the footer's machine-prefixed change-directory path is what identifies
+  the change once the header is gone.
 - A selected tab whose artifact disappears during a refresh falls back to
   `proposal`.
 
@@ -121,11 +131,15 @@ directory that disappears entirely.
   then its own `mdView` call with the title only on the first).
 - Tasks tab is deliberately not markdown: it is a checklist built from
   `taskRows()` — section headings in `NIGHT.muted`, ✓ in `NIGHT_MD.done`,
-  ○ in `NIGHT.faint`, text at full width, untruncated, no row cap. The panel
+  ○ in `NIGHT.faint`, text not truncated to the row width and no row cap
+  (that lifts the panel row's ellipsis and its capped folded-out list; the
+  parser still drops wrapped continuation lines, as it always has). The panel
   truncates and caps because it is a list row; the viewer is the page.
 - States are per artifact: loading text while the first read is in flight,
   the per-file absent and empty text, and the error's text when the read
-  throws.
+  throws. The footer is `machine: <change dir>`, omitted when the path is
+  empty; with the header's name gone, that footer line is what identifies the
+  change in the absent, empty and error states.
 
 ### D5 — Ticking from the tasks tab
 

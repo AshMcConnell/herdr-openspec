@@ -16,10 +16,14 @@ row out in the panel.
   the change actually has (proposal always present as the anchor; specs can
   be several, one per capability). Same Tokyo Night palette, same
   `pane.split` props (`file`, `change`, `on`), so panes saved under the old
-  viewer reopen as the tabbed one with no migration.
+  viewer reopen as the tabbed one with no migration. The footer now names the
+  change's directory rather than the opened file's path (machine-prefixed,
+  omitted when empty) — the tab bar replaces the header, so the footer is
+  what identifies the change.
 - **The tasks tab is a themed checklist** (`proposal-viewer` delta): sections
   and rows from the change's `tasks.md`, ✓ green for done, ○ faint for open,
-  full text untruncated. On a local pane a click ticks that line in the file
+  text not truncated to the row width (and with no row cap, unlike the
+  panel's folded-out list). On a local pane a click ticks that line in the file
   with the panel's compare-and-swap semantics — a stale snapshot gets one
   re-read and retry, the flip is optimistic, a failure reports by toast, and
   only one toggle runs at a time. Remote panes are read-only.
@@ -34,8 +38,9 @@ row out in the panel.
 - **The menu item is relabelled View change** (`context-menu` delta) and
   opens the same viewer with the same props; the no-root error toast stays.
 - **The review minors from `theme-proposal-viewer` are folded in** (labelled
-  in `tasks.md` §1): the blockquote bar is the Obsidian accent `#80d0ff`
-  (`#565f89` was the wrong token), the block parser splits lines CRLF-aware
+  in `tasks.md` §1): the blockquote bar takes the owner's theme accent
+  `#80d0ff` (Tokyo Night's interactive accent, `hsl(202,100%,75%)`;
+  `#565f89` was the wrong token), the block parser splits lines CRLF-aware
   (while the task ticker keeps its byte-exact round-trip), fence info strings
   containing spaces render their chip, the spec now states the 2000-block
   truncation carve-out to "never drop content", and README/RECIPE say that
