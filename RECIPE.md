@@ -45,7 +45,8 @@ It shows itself four ways:
 - **A proposal viewer**: the same pane split with
   `"props":{"file":"/path/to/repo/openspec/changes/<name>/proposal.md","change":"<name>","on":null}`
   shows the same mod as a viewer for that one `proposal.md` — headings,
-  bullets and code rendered as markdown, selectable and scrollable
+  bullets and code rendered as markdown, selectable and scrollable, in a
+  fixed Tokyo Night (the owner's Obsidian theme) palette
   (normally opened from the row menu's **View proposal**; the props are
   saved with the tab, so the pane survives restarts).
 

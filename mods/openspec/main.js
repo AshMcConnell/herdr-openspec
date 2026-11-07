@@ -4,8 +4,9 @@
 // spaces fall back to a 15-second poll). Click a change to fold out its task
 // list from tasks.md; click a task to tick or untick it in the file itself
 // (local only); right-click it for a small menu (Copy name; View proposal
-// opens the change's proposal.md as a markdown pane beside the work); the box
-// button archives it (openspec archive --yes).
+// opens the change's proposal.md as a markdown pane beside the work, themed
+// Tokyo Night — the owner's Obsidian theme); the box button archives it
+// (openspec archive --yes).
 //
 // Lives at ~/.config/herdr-app/mods/openspec/.
 // https://github.com/AshMcConnell/herdr-openspec — MIT license.
@@ -101,6 +102,19 @@ const STATES = [
   { id: "unstarted", label: "Unstarted", chip: "unstarted", color: "muted" },
   { id: "draft", label: "No tasks", chip: "no tasks", color: "dim" },
 ];
+
+// Tokyo Night (dark) — the owner's Obsidian theme, as constants (the mod must
+// not read a vault's CSS or depend on Obsidian paths). Proposal viewer only;
+// the change list keeps the app theme.
+const NIGHT = {
+  bg: "#1a1b26",    // --background-primary
+  bgAlt: "#16161e", // --background-secondary (header/footer chrome)
+  border: "#292e42",// --background-modifier-border
+  fg: "#c0caf5",    // --text-normal
+  muted: "#a9b1d6", // --text-muted (the proposal.md chip)
+  faint: "#565f89", // --text-faint (footer path, loading/absent/empty states)
+  error: "#db4b4b", // --text-error (read failure)
+};
 
 function stateOf(c) {
   if (c.total > 0 && c.done >= c.total) return "complete";
@@ -428,29 +442,33 @@ export default class OpenSpec extends View {
 
   // The viewer pane: the change's name and a proposal.md chip over the file
   // rendered as markdown (selectable, its own scroll), the machine-prefixed
-  // path in a footer — the panel's own header/footer style.
-  proposalView(t) {
+  // path in a footer — painted from the built-in Tokyo Night palette (the
+  // owner's Obsidian theme), fixed whatever the app theme is; only the
+  // body's inherited text colour and typography are themed (the TextView
+  // component's own decorations — headings, code, links — keep their look).
+  proposalView() {
     const where = `${this.machine ? `${this.machine}: ` : ""}${this.file}`;
-    return v_flex().id("openspec-proposal").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
-      .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
-      .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
+    return v_flex().id("openspec-proposal").size_full().min_h(0).rounded(10).overflow_hidden().bg(NIGHT.bg)
+      .border_1().border_color(NIGHT.border).text_color(NIGHT.fg).text_size(13)
+      .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().bg(NIGHT.bgAlt).border_b(1).border_color(NIGHT.border)
         .child(div().flex_1().min_w(0).truncate().font_semibold().child(this.change))
-        .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).flex_none().child("proposal.md")))
+        .child(div().px(5).py(1).rounded(4).border_1().border_color(NIGHT.border).text_size(10).text_color(NIGHT.muted).flex_none().child("proposal.md")))
       .child(v_flex().flex_1().min_h(0)
-        .when(this.error, (e) => e.child(div().p(10).text_color(t.dim).child(this.error)))
-        .when(!this.error && this.text === undefined, (e) => e.child(div().p(10).text_color(t.dim).child("Loading proposal…")))
-        .when(!this.error && this.text === null, (e) => e.child(div().p(10).text_color(t.dim).child("No proposal.md — this change has none")))
-        .when(!this.error && this.text === "", (e) => e.child(div().p(10).text_color(t.dim).child("proposal.md is empty")))
+        .when(this.error, (e) => e.child(div().p(10).text_color(NIGHT.error).child(this.error)))
+        .when(!this.error && this.text === undefined, (e) => e.child(div().p(10).text_color(NIGHT.faint).child("Loading proposal…")))
+        .when(!this.error && this.text === null, (e) => e.child(div().p(10).text_color(NIGHT.faint).child("No proposal.md — this change has none")))
+        .when(!this.error && this.text === "", (e) => e.child(div().p(10).text_color(NIGHT.faint).child("proposal.md is empty")))
         .when(!this.error && typeof this.text === "string" && this.text.length > 0, (e) =>
-          e.child(TextView.markdown("openspec-proposal-text", this.text).flex_1().min_h(0).selectable().scrollable())))
-      .when(Boolean(this.file), (e) => e.child(h_flex().flex_none().h(26).px(12).items_center().border_t(1).border_color(t.border)
-        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(where))));
+          e.child(TextView.markdown("openspec-proposal-text", this.text).text_color(NIGHT.fg).text_size(15).line_height(1.6)
+            .flex_1().min_h(0).selectable().scrollable())))
+      .when(Boolean(this.file), (e) => e.child(h_flex().flex_none().h(26).px(12).items_center().bg(NIGHT.bgAlt).border_t(1).border_color(NIGHT.border)
+        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(NIGHT.faint).child(where))));
   }
 
   render(cx) {
     const t = theme();
     if (typeof props()?.menuFor === "string") return this.menuView(t);
-    if (typeof props()?.file === "string") return this.proposalView(t);
+    if (typeof props()?.file === "string") return this.proposalView();
     if (key() !== this.context) this.refresh(cx);
     const rows = visible(this);
     const done = rows.reduce((n, c) => n + c.done, 0), total = rows.reduce((n, c) => n + c.total, 0);

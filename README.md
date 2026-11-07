@@ -13,8 +13,8 @@ Click a change to fold out its task list from `tasks.md`; click a task to
 tick or untick it there. Press the box button to archive a change
 (`openspec archive`, confirmed twice, reported by toast). Right-click a
 change for a small menu — **Copy name**, and **View proposal**, which opens
-the change's `proposal.md` rendered as markdown in a pane beside your work.
-The list follows the repository of
+the change's `proposal.md` rendered as markdown in a Tokyo Night (the
+Obsidian theme) pane beside your work. The list follows the repository of
 the terminal you're focused on — including spaces that live on another
 machine.
 
@@ -162,6 +162,11 @@ itself with `pane.split`.
 - **Every View proposal click opens another pane** — no de-duplication.
   Remote proposal panes poll every 15 seconds, reads are capped at 1 MiB,
   and a pane whose change was archived shows *No proposal.md* until closed.
+- **The proposal pane's palette is fixed** — Tokyo Night dark (the owner's
+  Obsidian theme), whatever the app theme is; a dark pane in a light theme
+  is deliberate. Only the pane's chrome and the body's text colour and
+  typography are themed — the markdown decorations the text component draws
+  itself (headings, code, links) keep their own styling.
 
 ## License
 
