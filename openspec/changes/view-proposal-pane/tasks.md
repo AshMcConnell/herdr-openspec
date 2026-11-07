@@ -8,7 +8,7 @@
 - [x] 2.2 proposal-viewer delta — pane content, states, refresh (local watch / remote + fallback poll), standalone
 
 ## 3. Mod — mods/openspec/main.js
-- [x] 3.1 Import `run` (herdr) and `TextView` (gpui-kit); update the header comment
+- [x] 3.1 Import `run` (herdr) and `TextView` (gpui-base); update the header comment
 - [x] 3.2 MENU: add View proposal; popup props carry root/on; choose passes them to run()
 - [x] 3.3 init/render: the `file`-prop viewer branch
 - [x] 3.4 load/watchProposal (watch local, poll remote, fallback)
@@ -22,4 +22,4 @@
 - [x] 5.1 Sync main.js to ~/.config/herdr-app/mods/openspec/; `herdr-app check` passes
 - [x] 5.2 `openspec validate view-proposal-pane --strict` passes
 - [x] 5.3 `openspec validate --specs --strict` passes (6/6, untouched)
-- [x] 5.4 In-app: right-click → View proposal opens the pane; markdown renders; a change without proposal.md shows the state; `openspec list` shows the change active
+- [ ] 5.4 In-app: `pane.split` with the menu item's exact props opens and renders the viewer (markdown, chip, footer); a change without proposal.md shows the state; `openspec list` shows the change active; the popup→click path still needs one manual right-click

@@ -238,7 +238,7 @@ export default class OpenSpec extends View {
   watchProposal(cx) {
     const dir = this.file.replace(/[^/]*$/, "");
     cx.spawn(async (cx) => {
-      try { for (;;) { await watchFolder(dir); this.load(cx); } }
+      try { for (;;) { await watchFolder(dir); await this.load(cx); } }
       catch { cx.timer.every(15000, (cx) => this.load(cx)); }
     });
   }
@@ -443,8 +443,8 @@ export default class OpenSpec extends View {
         .when(!this.error && this.text === "", (e) => e.child(div().p(10).text_color(t.dim).child("proposal.md is empty")))
         .when(!this.error && typeof this.text === "string" && this.text.length > 0, (e) =>
           e.child(TextView.markdown("openspec-proposal-text", this.text).flex_1().min_h(0).selectable().scrollable())))
-      .child(h_flex().flex_none().h(26).px(12).items_center().border_t(1).border_color(t.border)
-        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(where)));
+      .when(Boolean(this.file), (e) => e.child(h_flex().flex_none().h(26).px(12).items_center().border_t(1).border_color(t.border)
+        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(where))));
   }
 
   render(cx) {
