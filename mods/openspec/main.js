@@ -61,17 +61,20 @@ const key = () => JSON.stringify(location());
 // list copy that should wait for the acknowledgement (`open`), because the
 // row menu is a popup whose cx ends when it closes.
 const VIEWERS = "openspec.viewers"; // { [id]: { at, file, root, on } }
-const VIEW = "openspec.view";       // prefix: openspec.view.<id> = { id, seq, file, change, on }
+const VIEWS = "openspec.views";     // { [id]: { [seq]: { id, seq, file, change, on } } }
 const ACK = "openspec.view.ack";    // { [seq]: id }
 const QUIET = "openspec.view.quiet";// { [id]: ms } a viewer that did not answer
-const OPEN = "openspec.open";       // prefix: openspec.open.<panel> = { panel, name, root, on, seq }
+const OPENS = "openspec.opens";     // { [panel]: { panel, name, root, on, seq, at } }
 const VIEW_ACK_MS = 700;
 const VIEW_QUIET_MS = 15000;
+const OPEN_AGE_MS = 60000;
 const VIEWER_AGE_MS = 7 * 86400000;
 const VIEWER_CAP = 40;
 
-const viewKey = (id) => `${VIEW}.${id}`;
-const openKey = (panel) => `${OPEN}.${panel}`;
+const mapOf = (key) => {
+  const value = shared(key);
+  return value && typeof value === "object" ? value : {};
+};
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -114,10 +117,10 @@ function forgetViewer(id) {
 // command cannot reach it. Clearing the mark when it answers makes it a
 // candidate again at once.
 function quietMap() {
-  const now = Date.now(), all = shared(QUIET);
-  const map = all && typeof all === "object" ? all : {};
+  const now = Date.now(), map = mapOf(QUIET);
   return Object.fromEntries(Object.entries(map)
     .filter(([, at]) => typeof at === "number" && now - at < VIEWER_AGE_MS)
+    .sort((a, b) => a[1] - b[1])
     .slice(-VIEWER_CAP));
 }
 
@@ -148,17 +151,44 @@ const matchingViewers = (root, on) => root ? Object.entries(pruneViewers())
 // One acknowledgement per request token, kept short: two panels can have
 // requests in flight at once, and one key per token keeps them apart.
 function acknowledge(seq, id) {
-  const all = shared(ACK);
-  const next = { ...(all && typeof all === "object" ? all : {}), [seq]: id };
+  const next = { ...mapOf(ACK), [seq]: id };
   const keys = Object.keys(next);
   for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete next[k];
   setShared(ACK, next);
 }
 
-const acknowledged = (seq, id) => {
-  const all = shared(ACK);
-  return Boolean(all && typeof all === "object" && all[seq] === id);
-};
+const acknowledged = (seq, id) => mapOf(ACK)[seq] === id;
+
+// The viewer request map, swept of ids that no longer have a live viewer, so
+// a reload, a crash, or a late request to a closed copy cannot leave a slot
+// behind in the persisted store.
+function liveViews() {
+  const live = new Set(Object.keys(pruneViewers()));
+  return Object.fromEntries(Object.entries(mapOf(VIEWS)).filter(([id]) => live.has(id)));
+}
+
+// Take one request back when its acknowledgement window closes, so a copy
+// that wakes late cannot switch after the panel has moved on or opened a pane.
+function withdrawView(id, seq) {
+  const all = mapOf(VIEWS), queue = all[id];
+  if (!queue || typeof queue !== "object" || !(seq in queue)) return;
+  const left = { ...queue };
+  delete left[seq];
+  const next = { ...all };
+  if (Object.keys(left).length) next[id] = left;
+  else delete next[id];
+  setShared(VIEWS, next);
+}
+
+// Menu requests older than a minute are dead: the popup that wrote them is
+// long gone. Keeping the map bounded stops a crash from leaving it forever.
+function openRequests() {
+  const now = Date.now();
+  return Object.fromEntries(Object.entries(mapOf(OPENS))
+    .filter(([, r]) => r && typeof r.at === "number" && now - r.at < OPEN_AGE_MS)
+    .sort((a, b) => a[1].at - b[1].at)
+    .slice(-VIEWER_CAP));
+}
 
 const ago = (at) => {
   if (!at) return "";
@@ -219,7 +249,7 @@ const MENU = [
         props: { file, change: name, on: at.on ?? null } });
       return;
     }
-    setShared(openKey(at.panel), { panel: at.panel, name, root: at.root, on: at.on ?? null, seq: uid() });
+    setShared(OPENS, { ...openRequests(), [at.panel]: { panel: at.panel, name, root: at.root, on: at.on ?? null, seq: uid(), at: Date.now() } });
     run("openspec.open");
   } },
 ];
@@ -682,7 +712,7 @@ export default class OpenSpec extends View {
   // handles the request; a second panel for the same repository ignores it.
   acceptOpen(cx) {
     if (this.closed) return;
-    const req = shared(openKey(this.panelId));
+    const req = openRequests()[this.panelId];
     if (!req || req.panel !== this.panelId || req.seq === this.handledOpen) return;
     this.handledOpen = req.seq;
     this.requestViewer(req.name, cx, { root: req.root ?? null, on: req.on ?? null, openIfNone: true });
@@ -711,18 +741,21 @@ export default class OpenSpec extends View {
       }
       const [id] = candidate;
       const seq = uid();
-      // One slot per viewer, holding any requests still being delivered: two
+      // One queue per viewer, holding any requests still being delivered: two
       // panels can ask the same viewer at once, and both must be answered.
-      const slot = shared(viewKey(id));
-      const pending = { ...(slot && typeof slot === "object" ? slot : {}),
-        [seq]: { id, seq, file, change: name, on: on ?? null } };
-      const keys = Object.keys(pending);
-      for (const k of keys.slice(0, Math.max(0, keys.length - 10))) delete pending[k];
-      setShared(viewKey(id), pending);
+      const all = liveViews();
+      const queue = { ...(all[id] ?? {}), [seq]: { id, seq, at: Date.now(), file, change: name, on: on ?? null } };
+      const keys = Object.keys(queue);
+      for (const k of keys.slice(0, Math.max(0, keys.length - 10))) delete queue[k];
+      setShared(VIEWS, { ...all, [id]: queue });
       run("openspec.view");
       cx.timer.after(VIEW_ACK_MS, (cx) => {
-        if (token !== this.viewToken || this.closed) return;
         if (acknowledged(seq, id)) { clearQuiet(id); return; }
+        // A click can retire this wait, and a closing panel's timer can be
+        // cancelled: take the request back before either early return, so a
+        // copy that wakes later cannot switch for an abandoned click.
+        withdrawView(id, seq);
+        if (token !== this.viewToken || this.closed) return;
         markQuiet(id);
         step(i + 1, cx);
       });
@@ -775,17 +808,27 @@ export default class OpenSpec extends View {
   // copy. The last request in the slot is the one the copy lands on.
   followView(cx) {
     if (this.closed) return;
-    const slot = shared(viewKey(this.viewerId));
+    const all = mapOf(VIEWS);
+    const slot = all[this.viewerId];
     if (!slot || typeof slot !== "object") return;
-    const reqs = Object.values(slot).filter((r) =>
-      r && r.id === this.viewerId && r.seq !== this.seenSeq && typeof r.file === "string" && r.file);
-    if (!reqs.length) return;
-    for (const r of reqs) acknowledge(r.seq, this.viewerId);
+    const now = Date.now();
+    const valid = (r) => r && r.id === this.viewerId && typeof r.file === "string" && r.file;
+    const fresh = Object.values(slot).filter((r) =>
+      valid(r) && r.seq !== this.seenSeq && typeof r.at === "number" && now - r.at < VIEW_ACK_MS);
+    // Drop expired, already-handled and malformed entries even when nothing
+    // fresh is left, so an abandoned click cannot stay in the persisted queue.
+    if (fresh.length !== Object.keys(slot).length) {
+      const left = Object.fromEntries(Object.entries(slot).filter(([, r]) => fresh.includes(r)));
+      const next = { ...all };
+      if (Object.keys(left).length) next[this.viewerId] = left;
+      else delete next[this.viewerId];
+      setShared(VIEWS, next);
+    }
+    if (!fresh.length) return;
+    for (const r of fresh) acknowledge(r.seq, this.viewerId);
     clearQuiet(this.viewerId);
-    const req = reqs[reqs.length - 1];
+    const req = fresh[fresh.length - 1];
     this.seenSeq = req.seq;
-    const left = Object.fromEntries(Object.entries(slot).filter(([, r]) => !reqs.includes(r)));
-    setShared(viewKey(this.viewerId), Object.keys(left).length ? left : null);
     if (req.file === this.file) return; // already showing it
     this.switchTo(req, cx);
   }
@@ -824,9 +867,20 @@ export default class OpenSpec extends View {
       this.stopRefresh();
       forgetViewer(this.viewerId);
       clearQuiet(this.viewerId);
-      setShared(viewKey(this.viewerId), null);
-    } else if (this.panelId) {
-      setShared(openKey(this.panelId), null);
+      const all = mapOf(VIEWS);
+      if (this.viewerId in all) {
+        const next = { ...all };
+        delete next[this.viewerId];
+        setShared(VIEWS, next);
+      }
+    }
+    if (this.panelId) {
+      const all = openRequests();
+      if (this.panelId in all) {
+        const next = { ...all };
+        delete next[this.panelId];
+        setShared(OPENS, next);
+      }
     }
   }
 

@@ -164,8 +164,8 @@ remote alike) and otherwise adds no programs: it reads `proposal.md`,
 for remote spaces) and opens itself with `pane.split`.
 
 The list and viewer copies find each other through Herdr's shared values
-(`openspec.viewers`, per-viewer `openspec.view.<id>`, `openspec.view.ack`,
-`openspec.view.quiet` and per-panel `openspec.open.<panel>`) and the mod's
+(`openspec.viewers`, `openspec.views`, `openspec.view.ack`,
+`openspec.view.quiet` and `openspec.opens`) and the mod's
 own `view` and `open` commands — no new programs, no files and no network.
 
 ## Limits

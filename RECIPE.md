@@ -90,11 +90,11 @@ artifacts with `readTextFile` (on the pane's machine for remote spaces): a
 folder watch on the change's own folder keeps a local pane current —
 `specs/` included — and remote panes poll every 15 seconds (as does a watch
 that cannot arm). List and viewer copies address each other through Herdr's
-shared values (`openspec.viewers`, per-viewer `openspec.view.<id>`,
-`openspec.view.ack`, `openspec.view.quiet` and per-panel
-`openspec.open.<panel>`) and the mod's own `view` / `open` commands, so an
-open viewer is switched in place rather than duplicated. Those are the same
-kind of command every mod key binding uses; no programs are started.
+shared values (`openspec.viewers`, `openspec.views`, `openspec.view.ack`,
+`openspec.view.quiet` and `openspec.opens`) and the mod's own `view` /
+`open` commands, so an open viewer is switched in place rather than
+duplicated. Those are the same kind of command every mod key binding uses;
+no programs are started.
 
 Nothing else: no shell, no network. `readTextFile` reads the expanded
 change's `tasks.md`, and a task click writes it back with `writeTextFile`:
