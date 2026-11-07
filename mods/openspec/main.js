@@ -99,7 +99,7 @@ const SORTS = [
 
 const STATES = [
   { id: "complete", label: "✓ Complete", chip: "✓ complete", color: "done" },
-  { id: "nearly", label: "Nearly done", chip: null, color: "working" },
+  { id: "nearly", label: "Nearly done", chip: null, color: "accent" },
   { id: "progress", label: "In progress", chip: null, color: "muted" },
   { id: "unstarted", label: "Unstarted", chip: "unstarted", color: "muted" },
   { id: "draft", label: "No tasks", chip: "no tasks", color: "dim" },
@@ -791,7 +791,7 @@ export default class OpenSpec extends View {
     const confirming = this.confirming === c.name && Date.now() < this.confirmUntil;
     const state = stateOf(c), remaining = c.total - c.done;
     const chip = (label, color) => div().px(5).rounded(4).border_1().border_color(t.border).text_size(10).text_color(color).flex_none().child(label);
-    const barColor = state === "complete" ? t.done : state === "nearly" ? t.working : t.accent;
+    const barColor = state === "complete" ? t.done : state === "nearly" ? t.accent : t.working;
     return v_flex().flex_none()
       .child(h_flex().id(`chg-${c.name}`).h(38).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
         .when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(c.name, cx))
@@ -802,7 +802,7 @@ export default class OpenSpec extends View {
         .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(complete ? t.done : t.foreground).child(c.name))
         .when(c.total > 0, (e) => e.child(div().text_size(11).text_color(complete ? t.done : t.muted).child(`${c.done}/${c.total}`)))
         .when(state === "complete", (e) => e.child(chip("✓ complete", t.done)))
-        .when(state === "nearly", (e) => e.child(chip(`${remaining} left`, t.working)))
+        .when(state === "nearly", (e) => e.child(chip(`${remaining} left`, t.accent)))
         .when(state === "unstarted", (e) => e.child(chip("unstarted", t.muted)))
         .when(state === "draft", (e) => e.child(chip("no tasks", t.dim)))
         .when(state === "progress" && Boolean(c.status) && c.status !== "in-progress", (e) => e.child(chip(c.status, t.muted)))

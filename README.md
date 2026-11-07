@@ -30,7 +30,7 @@ live on another machine.
   the × clears it) and a sort button that cycles **recent → A–Z → % done →
   state**. The choice is remembered. Header totals follow the filtered set.
 - **State, at a glance**: every row carries a chip — green `✓ complete`,
-  amber `N left` when at most 2 tasks remain, `unstarted` (has tasks, none
+  blue `N left` when at most 2 tasks remain, `unstarted` (has tasks, none
   done), or `no tasks` (a proposal-only draft) — and the progress bar takes
   the state's color. The **state** sort groups the list under
   ✓ Complete / Nearly done / In progress / Unstarted / No tasks headers,
