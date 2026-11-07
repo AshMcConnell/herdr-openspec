@@ -8,12 +8,18 @@ cycling recent → A–Z → % done → state (remembered in the panel's
 `localStorage` under `"sort"`); the header totals follow the filtered set.
 Each row carries a state chip — `✓ complete`, `N left` (at most 2 tasks
 remaining), `unstarted`, or `no tasks` (proposal-only) — and the progress
-bar takes the state's color; the **state** sort groups the list under
-✓ Complete / Nearly done / In progress / Unstarted / No tasks headers with
-counts. Clicking a row folds out the change's task list from its
-`tasks.md` (✓ done, ○ open, section headings). The box button on a row
+bar takes the state's color (a complete change reads green all through:
+name, count, and its task list once expanded); the **state** sort groups the
+list under ✓ Complete / Nearly done / In progress / Unstarted / No tasks
+headers with counts. Clicking a row folds out the change's task list from
+its `tasks.md` (✓ done, ○ open, section headings; hovering shows a truncated
+row's full text); clicking a task ticks or unticks its checkbox in
+`tasks.md` itself (this machine only). The box button on a row
 archives that change: first click turns it into a red "Archive?" chip, the
-second runs `openspec archive <name> --yes` and reports by toast. It reads
+second runs `openspec archive <name> --yes` and reports by toast.
+Right-click a row for a small menu of its own: **Copy name** puts the
+change's name on the clipboard (`write_to_clipboard`; a toast confirms).
+It reads
 the repository of the focused pane — else any pane with a folder in the
 active space, else the space's folder — running `openspec` there, on its
 machine for remote spaces.
@@ -44,11 +50,18 @@ It shows itself three ways:
   is required: the mod has no TTY to answer OpenSpec's prompts, so an
   incomplete change proceeds with OpenSpec's warning instead of asking.
 - `git rev-parse --show-toplevel` once per switch, to anchor the watch and
-  `tasks.md` reads at the repository root (the folder itself when git fails).
+  the `tasks.md` reads and writes at the repository root (the folder itself
+  when git fails).
+
+The row menu's copy uses the app's clipboard directly — not a command.
 
 Nothing else: no shell, no network. `readTextFile` reads the expanded
-change's `tasks.md`. Change names come from `openspec list`, never from
-typed input, and none of the calls can start with `-`.
+change's `tasks.md`, and a task click writes it back with `writeTextFile`:
+a compare-and-swap on the copy just read (a concurrent edit rejects the
+write instead of being overwritten), local machine only (the writer takes
+no `on`), and only ever to `openspec/changes/<name>/tasks.md` with `<name>`
+from the list. Change names come from `openspec list`, never from typed
+input, and none of the calls can start with `-`.
 
 ## Install
 

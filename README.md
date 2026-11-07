@@ -7,10 +7,12 @@ mod: no web view, no server, just small JavaScript the app runs itself.
 
 ![OpenSpec docked in the side panel](preview-panel.png)
 
-Click a change to fold out its task list from `tasks.md`, and press the box
-button to archive a change (`openspec archive`, confirmed twice, reported by
-toast). The list follows the repository of the terminal you're focused on —
-including spaces that live on another machine.
+Click a change to fold out its task list from `tasks.md`; click a task to
+tick or untick it there. Press the box button to archive a change
+(`openspec archive`, confirmed twice, reported by toast). Right-click a
+change for a small menu — **Copy name**. The list follows the repository of
+the terminal you're focused on — including spaces that live on another
+machine.
 
 ![OpenSpec as a floating window](preview-window.png)
 
@@ -26,12 +28,19 @@ including spaces that live on another machine.
   done), or `no tasks` (a proposal-only draft) — and the progress bar takes
   the state's color. The **state** sort groups the list under
   ✓ Complete / Nearly done / In progress / Unstarted / No tasks headers,
-  each with its count.
+  each with its count. A complete change reads green all the way down —
+  name, count, and its task list once expanded.
 - **One row per active change**: name, progress bar, `done/total` tasks,
   and when the change was last touched. Rows sort most recent first,
   as `openspec list` does.
+- **Right-click a row**: a small menu — **Copy name** puts the change's name
+  on the clipboard and a toast confirms it. Built to take more items later.
 - **Expanded**: the change's task list — ✓ for done, ○ for open, under its
-  `tasks.md` section headings. Click again to fold it away.
+  `tasks.md` section headings. Click a task to toggle its box in `tasks.md`:
+  the row flips at once and the counts follow when the new file is read back
+  (this machine only — remote spaces can look, not tick). Rows truncate to
+  the panel; the full text shows on hover. Click the change again to fold it
+  away.
 - **Archive** (the box button): first click turns it into a red
   **Archive?** chip; second click runs `openspec archive <name> --yes`. It
   cancels if you click anything else or wait a few seconds. While it runs the
@@ -43,8 +52,10 @@ including spaces that live on another machine.
 ## Live
 
 The panel watches `openspec/changes/`, so a task an agent ticks or a change
-it creates appears right away. A 15-second poll covers remote machines (the
-folder watch is local-only), and switching spaces or panes re-reads at once.
+it creates appears right away — ticking a task from the panel proves it:
+the same watch carries its own write back into the counts. A 15-second poll
+covers remote machines (the folder watch is local-only), and switching
+spaces or panes re-reads at once.
 It runs `openspec list --json` in the focused repository — on its machine for
 remote spaces, the same way Herdr's own panels run `git`.
 
@@ -110,10 +121,15 @@ The mod runs `openspec` in the repository it follows: `openspec list --json`
 (every 15 seconds, when something under `openspec/changes/` changes, and when
 you switch pane or space), and `openspec archive <name> --yes` when you press
 the archive button's chip. One `git rev-parse --show-toplevel` per switch
-finds the repository root for reading `tasks.md` — read with Herdr's file
-reader, on the pane's machine for remote spaces. It never runs a shell: every
-call is an argument list, and change names come from `openspec list`, never
-typed input. Nothing goes to the network.
+finds the repository root for reading and writing `tasks.md` — read with
+Herdr's file reader, on the pane's machine for remote spaces. Ticking a task
+is a file write, not a command: `writeTextFile` replaces that change's
+`tasks.md` only if it still matches what the panel read (a lost race rejects
+the write rather than overwriting anyone), only ever at
+`openspec/changes/<name>/tasks.md` with `<name>` from the list, and only on
+this machine. It never runs a shell: every call is an argument list, and
+change names come from `openspec list`, never typed input. Nothing goes to
+the network.
 
 ## Limits
 
@@ -121,9 +137,12 @@ typed input. Nothing goes to the network.
   answer them: archiving a change with unfinished tasks proceeds with
   OpenSpec's own warning instead of asking.
 - **Remote spaces poll** every 15 seconds rather than watching files (Herdr's
-  folder watch is local-only).
-- **Long task lines** truncate to the row; continuation lines of a wrapped
-  task in `tasks.md` aren't shown, and lists past 120 tasks point at the file.
+  folder watch is local-only), and their task lists are read-only — the file
+  writer is local-only too.
+- **Long task lines** truncate to the row (the full text shows on hover);
+  continuation lines of a wrapped task in `tasks.md` aren't shown, and lists
+  past 120 tasks point at the file. Only the tasks shown can be ticked from
+  the panel.
 - **The filter matches change names** — not task text or specs.
 - **"Nearly done" means at most 2 tasks remain** — a fixed threshold, not a
   percentage; state chips and the state grouping use it.

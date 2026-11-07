@@ -2,14 +2,16 @@
 // changes, like `openspec list`, but always current. Watches openspec/changes/
 // so a ticked task or a new change shows up at once (local spaces only; remote
 // spaces fall back to a 15-second poll). Click a change to fold out its task
-// list from tasks.md; the box button archives it (openspec archive --yes).
+// list from tasks.md; click a task to tick or untick it in the file itself
+// (local only); right-click it for a small menu (Copy name); the box button
+// archives it (openspec archive --yes).
 //
 // Lives at ~/.config/herdr-app/mods/openspec/.
 // https://github.com/AshMcConnell/herdr-openspec — MIT license.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, props, closeOverlay, notify } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
 // focused pane's live folder, else any pane with one in the active space (any
@@ -34,22 +36,44 @@ const ago = (at) => {
     : `${Math.round(d / (86400000 * 30))}mo ago`;
 };
 
-// tasks.md -> flat rows: {section} headings and {done, text} checkboxes.
-// Continuation lines of a wrapped task are dropped: a panel wants one line each.
+// tasks.md -> flat rows: {section} headings and {done, line, text} checkbox
+// rows. Continuation lines of a wrapped task are dropped: a panel wants one
+// line each. Each checkbox remembers its line in the file — the click that
+// ticks it rewrites exactly that line.
 function taskRows(text) {
   const rows = [];
-  for (const line of (text ?? "").split("\n")) {
+  (text ?? "").split("\n").forEach((line, i) => {
     const head = /^#{1,6}\s+(.+)/.exec(line);
-    if (head) { rows.push({ section: head[1].trim() }); continue; }
+    if (head) { rows.push({ section: head[1].trim() }); return; }
     const box = /^\s*[-*]\s+\[( |x|X)\]\s+(.*)/.exec(line);
-    if (box) rows.push({ done: box[1].toLowerCase() === "x", text: box[2].trim() });
-  }
+    if (box) rows.push({ done: box[1].toLowerCase() === "x", line: i, text: box[2].trim() });
+  });
   return rows;
+}
+
+// tasks.md with one checkbox flipped: the mark on that line becomes `to`
+// ("x" when ticking, " " when not), every other byte identical — CRLF
+// endings included (`[\s\S]` keeps the line's trailing `\r`). Null when
+// the line no longer holds that task — the file changed shape under us.
+function toggled(text, line, task, to) {
+  const lines = text.split("\n"), box = /^(\s*[-*]\s+\[)( |x|X)(\]\s+)([\s\S]*)/.exec(lines[line]);
+  if (!box || box[4].trim() !== task) return null;
+  lines[line] = `${box[1]}${to ? "x" : " "}${box[3]}${box[4]}`;
+  return lines.join("\n");
 }
 
 // The archive button sits on every row (completed ones a touch brighter);
 // hidden while another archive is running.
 const showArchive = (c, self) => !self.busy || self.busy === c.name;
+
+// The row's right-click menu: what each item does with the change's name.
+// More items append here; the popup renders them in order.
+const MENU = [
+  { label: "Copy name", run: (name, cx) => {
+    cx.write_to_clipboard(name);
+    notify({ title: "Name copied", body: name, level: "success" });
+  } },
+];
 
 // Sort modes the header button cycles through. "recent" keeps openspec list's
 // own order (last modified first); "done" floats the closest-to-finished up;
@@ -94,11 +118,14 @@ function visible(self) {
 
 export default class OpenSpec extends View {
   init(_props, cx) {
-    this.changes = []; this.tasks = []; this.open = null;
+    this.handle = cx.focus_handle();
+    this.at = 0; // the right-click menu's keyboard spot
+    // The right-click menu popup: no list, no polls, no folder watch.
+    if (typeof props()?.menuFor === "string") { this.handle.focus(); return; }
+    this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.toggling = null;
     this.root = null; this.on = null; this.watched = null;
     this.error = null; this.loading = false;
     this.busy = null; this.confirming = null; this.confirmUntil = 0;
-    this.handle = cx.focus_handle();
     this.sort = localStorage.getItem("sort") ?? "recent";
     if (!SORTS.some((s) => s.id === this.sort)) this.sort = "recent";
     this.filter = "";
@@ -129,7 +156,7 @@ export default class OpenSpec extends View {
     const { cwd, on } = location(), context = key();
     if (context !== this.context) {
       this.context = context; this.root = null; this.on = null; this.watched = null;
-      this.changes = []; this.tasks = []; this.open = null; this.error = null;
+      this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.error = null;
       this.confirming = null; this.confirmUntil = 0;
     }
     if (!cwd) { this.root = null; return; }
@@ -162,16 +189,16 @@ export default class OpenSpec extends View {
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
         this.root = top.code === 0 ? top.stdout.trim() : cwd;
         this.on = on;
-        if (this.open && !this.changes.some((c) => c.name === this.open)) { this.open = null; this.tasks = []; }
+        if (this.open && !this.changes.some((c) => c.name === this.open)) { this.open = null; this.tasks = []; this.tasksText = null; }
         if (this.open) await this.loadTasks(this.open, context);
         this.watch(this.root, cx);
-      } catch (e) { if (key() === context) { this.changes = []; this.tasks = []; this.open = null; this.error = String(e); } }
+      } catch (e) { if (key() === context) { this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.error = String(e); } }
       finally { this.loading = false; cx.notify(); }
     });
   }
 
   // Reset to an empty, explained panel (no repo, no openspec, a failed run).
-  stale(text) { this.root = null; this.changes = []; this.tasks = []; this.open = null; this.error = text; }
+  stale(text) { this.root = null; this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.error = text; }
 
   async loadTasks(name, context) {
     const root = this.root, on = this.on;
@@ -179,11 +206,13 @@ export default class OpenSpec extends View {
     const text = await readTextFile(`${root}/openspec/changes/${name}/tasks.md`, { on });
     if (key() !== context || this.open !== name) return;
     this.tasks = text === null ? null : taskRows(text);
+    this.tasksText = text;
   }
 
   pick(name, cx) {
     this.open = this.open === name ? null : name;
     this.tasks = [];
+    this.tasksText = null;
     this.confirming = null;
     const context = this.context;
     if (this.open) cx.spawn(async (cx) => {
@@ -219,12 +248,60 @@ export default class OpenSpec extends View {
     cx.notify();
   }
 
-  taskLine({ section, done, text }, t) {
+  // A task click: flip that checkbox line in the change's tasks.md — the
+  // file is the truth, and the watch brings the new counts back. Optimistic
+  // (the row flips at once), one at a time, local spaces only: writeTextFile
+  // takes no `on`. The write is compare-and-swap on the snapshot loadTasks
+  // read; a rejection (an agent edited first) re-reads and tries once more,
+  // and anything that still fails shows the file's real state and toasts.
+  toggle(row, name, cx) {
+    if (this.on || !this.root || this.toggling || typeof row.line !== "number") return;
+    const path = `${this.root}/openspec/changes/${name}/tasks.md`;
+    const line = row.line, task = row.text, to = !row.done, context = key();
+    row.done = to; this.toggling = name; cx.notify();
+    cx.spawn(async (cx) => {
+      let body = this.tasksText, settled = null, why = "";
+      try {
+        let next = body === null ? null : toggled(body, line, task, to);
+        if (next !== null) {
+          try { await writeTextFile(path, next, body); settled = next; }
+          catch { next = null; } // stale snapshot: fall through to a re-read
+        }
+        if (settled === null) {
+          body = await readTextFile(path);
+          if (body === null) why = "tasks.md is gone";
+          else {
+            next = toggled(body, line, task, to);
+            if (next === null) { why = "the task changed under the click"; settled = body; }
+            else { await writeTextFile(path, next, body); settled = next; }
+          }
+        }
+      } catch (e) { why = String(e); if (settled === null) settled = body; }
+      if (key() === context && this.open === name && settled !== null) {
+        this.tasksText = settled; this.tasks = taskRows(settled);
+      }
+      this.toggling = null;
+      if (why) notify({ title: "Task not updated", body: why, level: "error" });
+      if (key() === context) this.refresh(cx);
+      cx.notify();
+    });
+  }
+
+  // A task row: ✓ done / ○ open. Hovering shows the full text (rows and
+  // section headings truncate); done tasks read green when their change is
+  // complete; local rows click to tick (toggle).
+  taskLine(row, t, name, complete) {
+    const { section, done, text, line } = row;
     if (section) return div().id(`os-sec-${section}`).h(20).flex_none().flex().items_center().px(8).truncate()
-      .text_size(10).font_semibold().text_color(t.dim).child(section);
-    return h_flex().id(`os-task-${text.slice(0, 40)}`).h(18).flex_none().px(8).gap(7).items_center()
+      .text_size(10).font_semibold().text_color(t.dim)
+      .when(Boolean(section), (e) => e.tooltip(section)).child(section);
+    return h_flex().id(`os-task-${line}`).h(18).flex_none().px(8).gap(7).items_center()
       .child(div().w(11).flex_none().text_size(11).text_color(done ? t.done : t.dim).child(done ? "✓" : "○"))
-      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(done ? t.dim : t.foreground).child(text || " "));
+      .child(div().flex_1().min_w(0).truncate().text_size(11)
+        .text_color(done ? (complete ? t.done : t.dim) : t.foreground).child(text || " "))
+      .when(Boolean(text), (e) => e.tooltip(text))
+      .when(!this.on, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => this.toggle(row, name, cx)));
   }
 
   row(c, t) {
@@ -236,7 +313,11 @@ export default class OpenSpec extends View {
     return v_flex().flex_none()
       .child(h_flex().id(`chg-${c.name}`).h(38).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
         .when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(c.name, cx))
-        .child(div().flex_1().min_w(0).truncate().font_semibold().child(c.name))
+        .on_mouse_down("right", (_e, cx) => {
+          cx.stop_propagation();
+          openOverlay({ mod: "openspec", kind: "popup", width: 200, height: 240, props: { menuFor: c.name } });
+        })
+        .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(complete ? t.done : t.foreground).child(c.name))
         .when(c.total > 0, (e) => e.child(div().text_size(11).text_color(complete ? t.done : t.muted).child(`${c.done}/${c.total}`)))
         .when(state === "complete", (e) => e.child(chip("✓ complete", t.done)))
         .when(state === "nearly", (e) => e.child(chip(`${remaining} left`, t.working)))
@@ -259,11 +340,38 @@ export default class OpenSpec extends View {
         .when(this.tasks === null, (el) => el.child(div().px(8).py(3).text_size(11).text_color(t.dim).child("No tasks.md")))
         .when(Array.isArray(this.tasks), (el) => {
           const rows = this.tasks.slice(0, 120);
-          return el.children(rows.map((r) => this.taskLine(r, t)))
+          return el.children(rows.map((r) => this.taskLine(r, t, c.name, complete)))
             .when(this.tasks.length > 120, (el2) => el2.child(div().px(8).py(2).text_size(10).text_color(t.dim)
               .child(`+ ${this.tasks.length - 120} more in tasks.md`)))
             .when(!this.tasks.length, (el2) => el2.child(div().px(8).py(3).text_size(11).text_color(t.dim).child("No tasks yet")));
         })));
+  }
+
+  // The right-click popup on a row: MENU's items over the list. Esc and a
+  // click beside it close it (the host does both); ↑/↓/Enter pick.
+  menuView(t) {
+    const name = props().menuFor;
+    const choose = (i, cx) => {
+      const it = MENU[i];
+      if (!it) return;
+      it.run(name, cx); // while the popup (and its cx) is still alive
+      closeOverlay(props().overlay);
+    };
+    return v_flex().id("openspec-menu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(12.8)
+      .on_key_down((e, cx) => {
+        if (e.key === "down") this.at = (this.at + 1) % MENU.length;
+        else if (e.key === "up") this.at = (this.at + MENU.length - 1) % MENU.length;
+        else if (e.key === "enter") choose(this.at, cx);
+        else if (e.key === "escape") closeOverlay(props().overlay);
+        else return;
+        cx.notify();
+      })
+      .children(MENU.map((it, i) => h_flex().id(`os-mi-${i}`).h(31).px(8).rounded(7).items_center()
+        .text_color(t.foreground)
+        .when(i === this.at, (el) => el.bg(t.selected))
+        .hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => choose(i, cx))
+        .child(div().flex_1().child(it.label))));
   }
 
   clearFilter(cx) {
@@ -275,8 +383,9 @@ export default class OpenSpec extends View {
   }
 
   render(cx) {
-    if (key() !== this.context) this.refresh(cx);
     const t = theme();
+    if (typeof props()?.menuFor === "string") return this.menuView(t);
+    if (key() !== this.context) this.refresh(cx);
     const rows = visible(this);
     const done = rows.reduce((n, c) => n + c.done, 0), total = rows.reduce((n, c) => n + c.total, 0);
     const filtering = Boolean((this.filter || "").trim());
