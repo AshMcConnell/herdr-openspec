@@ -3,18 +3,19 @@
 // so a ticked task or a new change shows up at once (local spaces only; remote
 // spaces fall back to a 15-second poll). Click a change to fold out its task
 // list from tasks.md; click a task to tick or untick it in the file itself
-// (local only); right-click it for a small menu (Copy name; View change opens
-// the whole change beside the work — proposal, design, tasks and specs, one
-// tab each — drawn in Tokyo Night, the owner's Obsidian theme, by the mod's
-// own markdown renderer, since the TextView component styles itself from the
-// app theme and reads flat; the tasks tab ticks checkboxes in tasks.md); the
-// box button archives it (openspec archive --yes).
+// (on this machine or the pane's remote one); right-click it for a small menu
+// (Copy name; View change opens the whole change beside the work — proposal,
+// design, tasks and specs, one tab each — drawn in Tokyo Night, the owner's
+// Obsidian theme, by the mod's own markdown renderer, since the TextView
+// component styles itself from the app theme and reads flat; the tasks tab
+// ticks checkboxes in tasks.md); the box button archives it (openspec archive
+// --yes).
 //
 // Lives at ~/.config/herdr-app/mods/openspec/.
 // https://github.com/AshMcConnell/herdr-openspec — MIT license.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, Tabs, Tab } from "gpui-base";
+import { v_flex, h_flex, HoverCard, InputState, Input, Tabs, Tab } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings, shared, setShared, nextCommand } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
@@ -222,6 +223,39 @@ function toggled(text, line, task, to) {
   if (!box || box[4].trim() !== task) return null;
   lines[line] = `${box[1]}${to ? "x" : " "}${box[3]}${box[4]}`;
   return lines.join("\n");
+}
+
+// How many times `needle` appears in `text`, counted literally — split/join,
+// never a regex, because task text can hold regex characters.
+function occurs(text, needle) {
+  return needle ? text.split(needle).length - 1 : 0;
+}
+
+// The exact old/new text a remote edit swaps: that line's bytes in `body` and
+// in `next` (the toggled text), trailing `\r` kept and a trailing `\n` when
+// the line is not the file's last, so a short task can never match inside a
+// longer one. Widen with the previous line until BOTH the old text is unique
+// in `body` and the new text unique in `next` — the verify after the edit
+// asks for each exactly once, so an ambiguous side would fail it — and refuse
+// (throw) rather than let `--old` replace more than one place. A pair that
+// changes nothing comes back as-is for writeFlip to accept without an edit.
+// Null when the two lines differ beyond the checkbox.
+function flipPair(body, line, next) {
+  const before = body.split("\n"), after = next.split("\n");
+  if (typeof before[line] !== "string" || typeof after[line] !== "string") return null;
+  const mark = /^(\s*[-*]\s+\[)[ xX](\][\s\S]*)$/, b = mark.exec(before[line]), a = mark.exec(after[line]);
+  if (!b || !a || b[1] !== a[1] || b[2] !== a[2]) return null;
+  if (before[line] === after[line]) return { old: before[line], neu: after[line] };
+  const tail = (add) => line === before.length - 1 ? add : `${add}\n`;
+  let old = tail(before[line]), neu = tail(after[line]);
+  const unique = () => occurs(body, old) === 1 && occurs(next, neu) === 1;
+  if (unique()) return { old, neu };
+  if (line > 0) {
+    old = `${before[line - 1]}\n${old}`;
+    neu = `${after[line - 1]}\n${neu}`;
+    if (unique()) return { old, neu };
+  }
+  throw "the task's line is not unique in tasks.md";
 }
 
 // The archive button sits on every row (completed ones a touch brighter);
@@ -1098,14 +1132,36 @@ export default class OpenSpec extends View {
     cx.notify();
   }
 
+  // The write a task click makes, shared by local and remote spaces. Locally
+  // it is writeTextFile's compare-and-swap against the snapshot — the same
+  // call, the same exceptions, unchanged. On a remote machine it is the herdr
+  // CLI's exact-text edit there: an old/new pair naming one line exactly (the
+  // flipPair guard), then a re-read proving the flip landed exactly once. A
+  // pair that changes nothing means the file already holds the asked state,
+  // so it is accepted as it stands, as the local write would be.
+  // Returns the settled text to show; throws when it cannot land or verify.
+  async writeFlip(path, body, next, line, task, to) {
+    if (!this.on) { await writeTextFile(path, next, body); return next; }
+    const pair = flipPair(body, line, next);
+    if (pair === null) throw "the task changed under the click";
+    if (pair.old === pair.neu) return body;
+    const r = await exec("herdr", ["file", "edit", "--on", this.on, path, "--old", pair.old, "--new", pair.neu]);
+    if (r.code !== 0) throw ((r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop() ?? "").slice(0, 300);
+    const reread = await readTextFile(path, { on: this.on });
+    if (reread === null) throw "tasks.md is gone";
+    if (occurs(reread, pair.neu) !== 1 || occurs(reread, pair.old) !== 0) throw "the write did not land as asked";
+    return reread;
+  }
+
   // A task click: flip that checkbox line in the change's tasks.md — the
   // file is the truth, and the watch brings the new counts back. Optimistic
-  // (the row flips at once), one at a time, local spaces only: writeTextFile
-  // takes no `on`. The write is compare-and-swap on the snapshot loadTasks
-  // read; a rejection (an agent edited first) re-reads and tries once more,
-  // and anything that still fails shows the file's real state and toasts.
+  // (the row flips at once), one at a time, in every space: locally the
+  // write is compare-and-swap on the snapshot loadTasks read; on a remote
+  // machine it is the CLI's exact-text edit, read–edit–verify (writeFlip). A
+  // rejection (an agent edited first) re-reads and tries once more, and
+  // anything that still fails shows the file's real state and toasts.
   toggle(row, name, cx) {
-    if (this.on || !this.root || this.toggling || typeof row.line !== "number") return;
+    if (!this.root || this.toggling || typeof row.line !== "number") return;
     const path = `${this.root}/openspec/changes/${name}/tasks.md`;
     const line = row.line, task = row.text, to = !row.done, context = key();
     row.done = to; this.toggling = name; cx.notify();
@@ -1114,16 +1170,16 @@ export default class OpenSpec extends View {
       try {
         let next = body === null ? null : toggled(body, line, task, to);
         if (next !== null) {
-          try { await writeTextFile(path, next, body); settled = next; }
+          try { settled = await this.writeFlip(path, body, next, line, task, to); }
           catch { next = null; } // stale snapshot: fall through to a re-read
         }
         if (settled === null) {
-          body = await readTextFile(path);
+          body = await readTextFile(path, { on: this.on });
           if (body === null) why = "tasks.md is gone";
           else {
             next = toggled(body, line, task, to);
             if (next === null) { why = "the task changed under the click"; settled = body; }
-            else { await writeTextFile(path, next, body); settled = next; }
+            else { settled = await this.writeFlip(path, body, next, line, task, to); }
           }
         }
       } catch (e) { why = String(e); if (settled === null) settled = body; }
@@ -1137,21 +1193,51 @@ export default class OpenSpec extends View {
     });
   }
 
-  // A task row: ✓ done / ○ open. Hovering shows the full text (rows and
-  // section headings truncate); done tasks read green when their change is
-  // complete; local rows click to tick (toggle).
+  // The card a row shows instead of the shell's one-line tooltip: the panel's
+  // own Tokyo Night surface, capped to a readable width so a long line wraps
+  // rather than running off the screen, naming the row's state above the full
+  // text. `trigger` is the whole row — its hover background and click area
+  // included — and the card keeps an id apart from the row's. Task rows also
+  // pass `onToggle` and get a full-width button under the text that flips the
+  // task through the same toggle() the row clicks — "✓ Mark done" on an open
+  // task, "↺ Reopen" on a done one. The card has no close API, so it stays
+  // open across the flip and just re-renders to the new state. Section cards
+  // pass nothing and stay buttonless.
+  hoverCard(id, trigger, state, text, onToggle) {
+    const label = state === "done" ? "✓ done" : state === "open" ? "○ open" : "section";
+    const tone = state === "done" ? NIGHT_MD.done : state === "open" ? NIGHT.muted : NIGHT.faint;
+    return HoverCard.new(id).trigger(trigger.w_full())
+      .content(v_flex().w(340).p(10).gap(6).rounded(8).bg(NIGHT.bg)
+        .border_1().border_color(NIGHT.border)
+        .child(div().text_size(10).font_semibold().text_color(tone).child(label))
+        .child(div().min_w(0).text_size(12.5).line_height("18px").text_color(NIGHT.fg).child(text))
+        .when(onToggle, (e) => e.child(h_flex().id(`${id}-toggle`).w_full().h(24).flex_none().items_center()
+          .justify_center().rounded(6).border_1().border_color(NIGHT.border).text_size(10).font_semibold()
+          .cursor_pointer().text_color(state === "done" ? NIGHT.muted : NIGHT_MD.done)
+          .hover((s) => s.bg(NIGHT.bgAlt).text_color(NIGHT.fg))
+          .on_click((_e, cx) => onToggle(cx))
+          .child(state === "done" ? "↺ Reopen" : "✓ Mark done"))))
+      .anchor("top_left").open_delay(400).close_delay(250);
+  }
+
+  // A task row: ✓ done / ○ open. A rest on the row (or a section heading)
+  // shows the hover card, because both truncate; done tasks read green when
+  // their change is complete; rows click to tick (toggle) in any space.
   taskLine(row, t, name, complete) {
     const { section, done, text, line } = row;
-    if (section) return div().id(`os-sec-${section}`).h(20).flex_none().flex().items_center().px(8).truncate()
-      .text_size(10).font_semibold().text_color(t.dim)
-      .when(Boolean(section), (e) => e.tooltip(section)).child(section);
-    return h_flex().id(`os-task-${line}`).h(18).flex_none().px(8).gap(7).items_center()
+    if (section) {
+      const head = div().id(`os-sec-${section}`).h(20).flex_none().flex().items_center().px(8).truncate()
+        .text_size(10).font_semibold().text_color(t.dim).child(section);
+      return Boolean(section) ? this.hoverCard(`os-sec-card-${section}`, head, "section", section) : head;
+    }
+    const item = h_flex().id(`os-task-${line}`).h(18).flex_none().px(8).gap(7).items_center()
       .child(div().w(11).flex_none().text_size(11).text_color(done ? green(t) : t.dim).child(done ? "✓" : "○"))
       .child(div().flex_1().min_w(0).truncate().text_size(11)
         .text_color(done ? (complete ? green(t) : t.dim) : t.foreground).child(text || " "))
-      .when(Boolean(text), (e) => e.tooltip(text))
-      .when(!this.on, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => this.toggle(row, name, cx)));
+      .cursor_pointer().hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => this.toggle(row, name, cx));
+    return Boolean(text) ? this.hoverCard(`os-task-card-${line}`, item, done ? "done" : "open", text,
+      (cx) => this.toggle(row, name, cx)) : item;
   }
 
   row(c, t) {

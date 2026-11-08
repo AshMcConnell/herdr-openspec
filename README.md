@@ -60,10 +60,16 @@ does not change that repository; it stays on the last terminal you focused.
 - **Expanded**: the change's task list — ✓ for done, ○ for open, under its
   `tasks.md` section headings. Click a task to toggle its box in `tasks.md`:
   the row flips at once and the counts follow when the new file is read back
-  (this machine only — remote spaces can look, not tick). Opening a change's
-  row also switches an open viewer to that change; clicking the open row
-  again only folds the tasks away. Rows truncate to the panel; the full text
-  shows on hover. Click the change again to fold it away.
+  (this machine or the pane's remote one — a remote flip goes through the
+  `herdr` CLI's exact-text edit and is verified against a re-read). Opening a
+  change's row also switches an open viewer to that change; clicking the open
+  row again only folds the tasks away. Rows truncate to the panel; resting
+  the pointer on one shows a styled multi-line card with the full text, named
+  with the task's state (✓ done or ○ open) and, on a task card, a
+  "✓ Mark done" / "↺ Reopen" button that ticks the task straight from the
+  card — in any space; section cards show no button. A too-long section
+  heading gets the same card, labelled `section`. Click the change again to
+  fold it away.
 - **Archive** (the box button): first click turns it into a red
   **Archive?** chip; second click runs `openspec archive <name> --yes`. It
   cancels if you click anything else or wait a few seconds. While it runs the
@@ -150,13 +156,16 @@ you switch pane or space), and `openspec archive <name> --yes` when you press
 the archive button's chip. One `git rev-parse --show-toplevel` per switch
 finds the repository root for reading and writing `tasks.md` — read with
 Herdr's file reader, on the pane's machine for remote spaces. Ticking a task
-is a file write, not a command: `writeTextFile` replaces that change's
-`tasks.md` only if it still matches what the panel read (a lost race rejects
-the write rather than overwriting anyone), only ever at
-`openspec/changes/<name>/tasks.md` with `<name>` from the list, and only on
-this machine. It never runs a shell: every call is an argument list, and
-change names come from `openspec list`, never typed input. Nothing goes to
-the network.
+is a file write, not a command. On this machine `writeTextFile` replaces that
+change's `tasks.md` only if it still matches what the panel read (a lost race
+rejects the write rather than overwriting anyone). On a remote machine it is
+`herdr file edit --on <machine>`: one checkbox line's exact text is replaced,
+widened with neighbouring context until it matches one place only, and the
+result is verified against a re-read before the panel accepts it. Either way
+the write is only ever at `openspec/changes/<name>/tasks.md` with `<name>`
+from the list. It never runs a shell: every call is an argument list, and
+change names come from `openspec list`, never typed input. Nothing goes
+beyond the machines Herdr already connects.
 
 The **View change** viewer runs `find` to list a change's specs (local and
 remote alike) and otherwise adds no programs: it reads `proposal.md`,
@@ -174,10 +183,9 @@ own `view` and `open` commands — no new programs, no files and no network.
   answer them: archiving a change with unfinished tasks proceeds with
   OpenSpec's own warning instead of asking.
 - **Remote spaces poll** every 15 seconds rather than watching files (Herdr's
-  folder watch is local-only), and their task lists are read-only — the file
-  writer is local-only too.
-- **Long task lines** truncate to the row (the full text shows on hover);
-  continuation lines of a wrapped task in `tasks.md` aren't shown, and lists
+  folder watch is local-only).
+- **Long task lines** truncate to the row (the full text shows in a hover
+  card); continuation lines of a wrapped task in `tasks.md` aren't shown, and lists
   past 120 tasks point at the file. Only the tasks shown can be ticked from
   the panel.
 - **The filter matches change names** — not task text or specs.
@@ -196,8 +204,8 @@ own `view` and `open` commands — no new programs, no files and no network.
   a Herdr restart returns it there. Remote change viewers poll every 15
   seconds, reads are capped at 1 MiB, and a pane whose change was archived
   falls back to the proposal tab's *No proposal.md* until closed.
-- **Remote tasks are read-only** — the viewer's checklist renders but a
-  click writes nothing (the file writer is local-only).
+- **The change viewer's checklist is read-only on remote panes** — it renders
+  but a click writes nothing (only the panel's fold-out ticks remotely).
 - **The change viewer's palette is fixed** — Tokyo Night dark (the owner's
   Obsidian theme), whatever the app theme is; a dark pane in a light theme
   is deliberate. Every body is drawn by the mod's own markdown renderer, so
