@@ -32,7 +32,7 @@ verified against the real CLI at runtime (see Decisions).
 - Tick and untick a task on a remote machine from the panel's fold-out rows
   and hover-card button, in the same interaction as local.
 - Guard the remote write like the local one: never blind-overwrite a
-  concurrent edit, verify the flip landed exactly once, and on any failure
+  concurrent edit, verify the clicked line holds the flip, and on any failure
   show the file's real state and toast.
 - Keep local behaviour byte-identical.
 - Keep toggles one at a time across both routes.
@@ -71,7 +71,13 @@ machine ls` is `{"machines":[]}` locally, so `--on <machine>` has no local
 registry to route through. The on-machine run needs no registry at all.
 `file edit` was probed green: `herdr-core file edit <abs-path> --old X --new
 Y` replaced exactly once (exit 0) and refused a duplicate with "the old text
-is in the file 2 times" (exit 1, nothing written). Fallbacks, now unlikely
+is in the file 2 times" (exit 1, nothing written). The first tick over the
+exec hop then still came back with a herdr-core usage error (a JSON object,
+clipped by the toast), so two suspects remain — the values mangled in transit
+to the machine, or a herdr-core there older than `file edit`. The helper now
+sends single-line values only and Guard step 3 reports the CLI's own message,
+so the next tick says which; the second's remedy is updating herdr-core on
+that machine. Fallbacks, now unlikely
 (one-line swap inside the helper, see Risks): route through the kit's
 `hc(["file", "edit", path, "--old", old, "--new", new])` (add `hc` to the
 import at main.js:18), or, once herdr-core's local registry holds the
@@ -82,40 +88,48 @@ vehicle ran.
 **Guard: read → build exact old/new → edit → re-read → verify.** This is the
 remote analogue of the local compare-and-swap:
 
-1. **Old/new from current bytes.** `flipPair(body, line, next)` takes the
-   `body` just read and the `next` that `toggled(body, line, task, to)`
-   produced (caller already refused a null `next`), and returns
+1. **Old/new from current bytes, one line only.** `flipPair(body, line, next)`
+   takes the `body` just read and the `next` that `toggled(body, line, task,
+   to)` produced (caller already refused a null `next`), and returns
    `{ old, neu }`: that line's exact bytes in `body` and in `next` — the
-   0-based `split("\n")` index `toggled` uses, trailing `\r` kept, and the
-   trailing `\n` appended whenever the line is not the file's last (so
-   `- [ ] fix parser` can never match inside `- [ ] fix parser quickly`).
-   These strings are passed as exec argv entries — no shell, no quoting.
-2. **Uniqueness before writing, on both sides.** Count literal substring
-   occurrences of `old` in `body` and of `neu` in `next` (`occurs(text,
-   needle)` via split/join — never regex, task text can hold regex
-   characters). Both exactly one → proceed. Otherwise retry with the previous
-   line's bytes + `\n` prepended to both sides (neighbour context). Still not
-   exactly one on either side → throw "the task's line is not unique in
-   tasks.md" and write nothing. This is the guard against `--old` replacing
-   more than one place, and the `neu` half is what makes the post-edit verify
-   ("present exactly once") satisfiable at all: two task lines with the same
-   text in different states, or a short task whose longer ticked sibling
-   contains the flipped text, would otherwise land correctly and then fail
-   verification. A pair whose `old` and `neu` are the same bytes changes
-   nothing — the file already holds the asked state — so the helper hands it
-   back and `writeFlip` returns the read text as settled without running an
-   edit, the silent accept the local compare-and-swap gives.
+   0-based `split("\n")` index `toggled` uses, trailing `\r` kept, nothing
+   added. No trailing `\n` and no neighbouring context: a live tick had the
+   machine's herdr-core answer with a usage error, and a pair of single-line
+   values is one suspect fewer (the other is an older herdr-core there —
+   step 3's readable error tells them apart). These strings are passed as
+   exec argv entries — no shell, no quoting.
+2. **Uniqueness before writing.** Count literal substring occurrences of
+   `old` in `body` (`occurs(text, needle)` via split/join — never regex, task
+   text can hold regex characters). Exactly one → proceed; otherwise throw
+   "the task's line is not unique in tasks.md" and write nothing. There is no
+   widening retry: the pair stays one line, and the CLI's own guard backs the
+   refusal up (it refuses an `--old` found twice, all or none). The
+   mixed-state twin (`- [x] Read spec` beside `- [ ] Read spec`) is unique in
+   the clicked open state, so it passes here, and the line-index verify below
+   cannot be fooled by the twin either. A pair whose `old` and `neu` are the
+   same bytes changes nothing — the file already holds the asked state — so
+   the helper hands it back and `writeFlip` returns the read text as settled
+   without running an edit, the silent accept the local compare-and-swap
+   gives.
 3. **The edit.** `exec("herdr-core", ["file", "edit", path, "--old", old,
-   "--new", neu], { cwd: this.root, on: machine })`; a non-zero exit throws
-   with the last stderr/stdout line (same reporting shape as the archive
-   button). If the file drifted on the clicked line, `--old` matches nowhere
-   and the edit fails — that maps onto the existing "stale snapshot" retry
-   exactly.
-4. **Verify.** Re-read with `readTextFile(path, { on: machine })`; null →
-   throw "tasks.md is gone". Accept only if `occurs(reread, neu) === 1 &&
-   occurs(reread, old) === 0` — the flip landed exactly once. Anything else
-   throws "the write did not land as asked". Return the re-read as the
-   settled text, so the panel shows the file's real bytes.
+   "--new", neu], { cwd: this.root, on: machine })`. A non-zero exit throws
+   `exitDetail(r)`: the last non-empty stderr line, else stdout's, parsed as
+   JSON gives `herdr-core: <error.message> (<hint>)`, otherwise the raw line
+   cut to 300 chars (the archive button's shape). The readable message settles
+   the open question — a malformed-values complaint means the argv hop is
+   mangling them; an unknown-command complaint means the machine's
+   herdr-core predates `file edit` and needs updating there. If the file
+   drifted on the clicked line, `--old` matches nowhere and the edit fails —
+   that maps onto the existing "stale snapshot" retry exactly.
+4. **Verify by line index.** Re-read with `readTextFile(path, { on: machine
+   })`; null → throw "tasks.md is gone". Accept only when
+   `reread.split("\n")[line] === next.split("\n")[line]` — the clicked line
+   in the re-read byte-equals the clicked line in the intended content. Like
+   the edit, this is line-scoped: the flipped text appearing elsewhere (a
+   twin in the same state, or inside a longer line) cannot fail it, and the
+   file's last line needs no trailing newline. Anything else throws "the
+   write did not land as asked". Return the re-read as the settled text, so
+   the panel shows the file's real bytes.
 
 Semantic note (deliberate difference from local): the local CAS rejects a
 write if *any* byte of the file changed; the remote edit is line-scoped, so a
@@ -155,10 +169,15 @@ stays meaningful — it now describes section cards only.
 - **The `herdr-core file edit` surface was probed, not assumed.** The app's
   `herdr` binary has no `file` subcommand (its usage error was the first live
   tick), and `herdr-core machine ls` is empty locally, so `--on` cannot route
-  from here; running herdr-core on the machine needs no registry. The probe
-  replaced exactly once (exit 0) and refused a duplicate ("the old text is in
-  the file 2 times", exit 1, nothing written). The remote leg still needs the
-  owner's first real tick on a machine (manual checks).
+  from here; running herdr-core on the machine needs no registry. The local
+  probe replaced exactly once (exit 0) and refused a duplicate ("the old text
+  is in the file 2 times", exit 1, nothing written). The first tick over the
+  exec hop still came back with a herdr-core usage error, so one of two
+  suspects remains: the `--old/--new` values mangled in transit, or a
+  herdr-core on that machine older than `file edit` (remedy: update it
+  there). Single-line values and the readable error parse in Guard step 3
+  make the next toast name the cause. The remote leg still needs the owner's
+  first real tick on a machine (manual checks).
 - **`--old/--new` semantics:** a uniquely matching old text is replaced
   exactly once and a duplicate is refused, so a silent replace-all cannot
   happen. The uniqueness rule and post-write verify stay as belt and braces;

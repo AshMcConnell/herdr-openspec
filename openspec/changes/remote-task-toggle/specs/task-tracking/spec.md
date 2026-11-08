@@ -2,7 +2,7 @@
 
 ### Requirement: Click to toggle
 
-Clicking a task row SHALL flip that checkbox in `tasks.md` in the pane's space — this machine, or the remote machine the pane follows. The row flips at once (optimistically). On this machine the write replaces the file only if it still matches the copy the panel read (a compare-and-swap against the snapshot just read). On a remote machine the panel SHALL replace the clicked line's exact text through herdr-core's exact-text edit on that machine (`file edit` with the line's exact bytes as the old text and the flipped line as the new): the old/new pair SHALL be built from the copy the panel last read, extended with neighbouring context until the old text and the flipped text each match exactly one place in the file, and the toggle SHALL be refused without writing when the text is not unique. When the line already holds the asked state, the panel SHALL accept the file as it stands without running an edit. After the remote edit the panel SHALL re-read the file and accept the toggle only when the flipped line is present exactly once and the old line is gone. A rejected write, a refused edit or a verification that does not pass SHALL re-read the file and retry once. A task's hover card SHALL offer the same flip as a button inside the card, in every space: the button SHALL name the flip it performs, SHALL run the identical write path as a row click (one at a time, optimistic, guarded), and after the flip the card SHALL stay open and show the task's new state. Section heading cards SHALL show no toggle button.
+Clicking a task row SHALL flip that checkbox in `tasks.md` in the pane's space — this machine, or the remote machine the pane follows. The row flips at once (optimistically). On this machine the write replaces the file only if it still matches the copy the panel read (a compare-and-swap against the snapshot just read). On a remote machine the panel SHALL replace the clicked line's exact text through herdr-core's exact-text edit on that machine (`file edit` with the line's exact bytes as the old text and the flipped line as the new): the old/new pair SHALL be built from the copy the panel last read, matching exactly one place in the file, and the toggle SHALL be refused without writing when it does not. When the line already holds the asked state, the panel SHALL accept the file as it stands without running an edit. After the remote edit the panel SHALL re-read the file and check that the clicked line holds the flipped text before accepting the toggle. A rejected write, a refused edit or a verification that does not pass SHALL re-read the file and retry once. A task's hover card SHALL offer the same flip as a button inside the card, in every space: the button SHALL name the flip it performs, SHALL run the identical write path as a row click (one at a time, optimistic, guarded), and after the flip the card SHALL stay open and show the task's new state. Section heading cards SHALL show no toggle button.
 
 #### Scenario: Tick a task
 
@@ -31,12 +31,12 @@ Clicking a task row SHALL flip that checkbox in `tasks.md` in the pane's space �
 
 #### Scenario: Ambiguous remote line
 
-- **WHEN** the clicked task's line text or its flipped text matches more than one place in the remote file even with neighbouring context
+- **WHEN** the clicked task's line text matches more than one place in the remote file
 - **THEN** the panel refuses the toggle without writing, shows the file's real state and toasts that the task was not updated
 
 #### Scenario: Remote flip that does not verify
 
-- **WHEN** the re-read after a remote edit does not show the flipped line exactly once with the old line gone
+- **WHEN** the re-read after a remote edit does not show the clicked line holding the flipped text
 - **THEN** the panel shows the file's real state and toasts that the task was not updated
 
 #### Scenario: Section heading

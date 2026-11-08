@@ -232,30 +232,38 @@ function occurs(text, needle) {
 }
 
 // The exact old/new text a remote edit swaps: that line's bytes in `body` and
-// in `next` (the toggled text), trailing `\r` kept and a trailing `\n` when
-// the line is not the file's last, so a short task can never match inside a
-// longer one. Widen with the previous line until BOTH the old text is unique
-// in `body` and the new text unique in `next` — the verify after the edit
-// asks for each exactly once, so an ambiguous side would fail it — and refuse
-// (throw) rather than let `--old` replace more than one place. A pair that
-// changes nothing comes back as-is for writeFlip to accept without an edit.
-// Null when the two lines differ beyond the checkbox.
+// in `next` (the toggled text) — one line, nothing added, trailing `\r` kept —
+// so the whole edit travels as a pair of single-line argv values and needs no
+// neighbouring context. Refuse (throw) when that line is not unique in the
+// file: `--old` would be ambiguous, and the CLI's own all-or-none guard backs
+// the refusal up. A pair that changes nothing comes back as-is for writeFlip
+// to accept without an edit. Null when the two lines differ beyond the
+// checkbox.
 function flipPair(body, line, next) {
   const before = body.split("\n"), after = next.split("\n");
   if (typeof before[line] !== "string" || typeof after[line] !== "string") return null;
   const mark = /^(\s*[-*]\s+\[)[ xX](\][\s\S]*)$/, b = mark.exec(before[line]), a = mark.exec(after[line]);
   if (!b || !a || b[1] !== a[1] || b[2] !== a[2]) return null;
-  if (before[line] === after[line]) return { old: before[line], neu: after[line] };
-  const tail = (add) => line === before.length - 1 ? add : `${add}\n`;
-  let old = tail(before[line]), neu = tail(after[line]);
-  const unique = () => occurs(body, old) === 1 && occurs(next, neu) === 1;
-  if (unique()) return { old, neu };
-  if (line > 0) {
-    old = `${before[line - 1]}\n${old}`;
-    neu = `${after[line - 1]}\n${neu}`;
-    if (unique()) return { old, neu };
-  }
-  throw "the task's line is not unique in tasks.md";
+  const old = before[line], neu = after[line];
+  if (old === neu) return { old, neu };
+  if (occurs(body, old) !== 1) throw "the task's line is not unique in tasks.md";
+  return { old, neu };
+}
+
+// A failed command's detail for a toast. The last non-empty stderr line wins
+// (a stdout tail must not shadow the error), then stdout's, then "exit N";
+// herdr-core reports a usage error as a JSON object on one line, so that
+// becomes "herdr-core: message (hint)" and the real fault reads. Anything
+// else is reported as the line itself, truncated to 300 chars — the archive
+// button's shape.
+function exitDetail(r) {
+  const lastLine = (text) => `${text ?? ""}`.split("\n").filter((l) => l.trim()).pop();
+  const last = lastLine(r.stderr) ?? lastLine(r.stdout) ?? `exit ${r.code}`;
+  try {
+    const err = JSON.parse(last)?.error;
+    if (err && typeof err.message === "string") return `herdr-core: ${err.message}${err.hint ? ` (${err.hint})` : ""}`;
+  } catch { /* not JSON: report the line itself */ }
+  return last.slice(0, 300);
 }
 
 // The archive button sits on every row (completed ones a touch brighter);
@@ -1136,14 +1144,14 @@ export default class OpenSpec extends View {
   // it is writeTextFile's compare-and-swap against the snapshot — the same
   // call, the same exceptions, unchanged. On a remote machine it is herdr-core
   // running there (exec's `on` routes the whole process to the machine) and
-  // its exact-text edit: an old/new pair naming one line exactly (the flipPair
-  // guard), then a re-read proving the flip landed exactly once. Not the app's
-  // `herdr` CLI (no `file` subcommand — its usage error was the first live
-  // tick) and not `--on` (herdr-core's local machine registry is empty, so it
-  // cannot route from here); running on the machine needs no registry, and
-  // `this.root` is a valid cwd there. A pair that changes nothing means the
-  // file already holds the asked state, so it is accepted as it stands, as the
-  // local write would be.
+  // its exact-text edit: one checkbox line's exact bytes as `--old` and the
+  // flipped line as `--new`, then a re-read whose same line must hold the
+  // flipped text. Not the app's `herdr` CLI (no `file` subcommand — its usage
+  // error was the first live tick) and not `--on` (herdr-core's local machine
+  // registry is empty, so it cannot route from here); running on the machine
+  // needs no registry, and `this.root` is a valid cwd there. A pair that
+  // changes nothing means the file already holds the asked state, so it is
+  // accepted as it stands, as the local write would be.
   // Returns the settled text to show; throws when it cannot land or verify.
   async writeFlip(path, body, next, line, task, to) {
     if (!this.on) { await writeTextFile(path, next, body); return next; }
@@ -1151,10 +1159,10 @@ export default class OpenSpec extends View {
     if (pair === null) throw "the task changed under the click";
     if (pair.old === pair.neu) return body;
     const r = await exec("herdr-core", ["file", "edit", path, "--old", pair.old, "--new", pair.neu], { cwd: this.root, on: this.on });
-    if (r.code !== 0) throw ((r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop() ?? "").slice(0, 300);
+    if (r.code !== 0) throw exitDetail(r);
     const reread = await readTextFile(path, { on: this.on });
     if (reread === null) throw "tasks.md is gone";
-    if (occurs(reread, pair.neu) !== 1 || occurs(reread, pair.old) !== 0) throw "the write did not land as asked";
+    if (reread.split("\n")[line] !== next.split("\n")[line]) throw "the write did not land as asked";
     return reread;
   }
 

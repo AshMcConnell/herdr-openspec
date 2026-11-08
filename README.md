@@ -60,8 +60,9 @@ does not change that repository; it stays on the last terminal you focused.
 - **Expanded**: the change's task list — ✓ for done, ○ for open, under its
   `tasks.md` section headings. Click a task to toggle its box in `tasks.md`:
   the row flips at once and the counts follow when the new file is read back
-  (this machine or the pane's remote one — a remote flip goes through the
-  `herdr` CLI's exact-text edit and is verified against a re-read). Opening a
+  (this machine or the pane's remote one — a remote flip goes through
+  herdr-core's exact-text edit on the machine and is checked against a
+  re-read). Opening a
   change's row also switches an open viewer to that change; clicking the open
   row again only folds the tasks away. Rows truncate to the panel; resting
   the pointer on one shows a styled multi-line card with the full text, named
@@ -160,9 +161,8 @@ is a file write, not a command. On this machine `writeTextFile` replaces that
 change's `tasks.md` only if it still matches what the panel read (a lost race
 rejects the write rather than overwriting anyone). On a remote machine it is
 `herdr-core file edit` on the pane's machine: one checkbox line's exact text
-is replaced, widened with neighbouring context until it matches one place
-only, and the result is verified against a re-read before the panel accepts
-it. Either way
+is replaced (refused if that line is not unique in the file), and the line is
+checked against a re-read before the panel accepts it. Either way
 the write is only ever at `openspec/changes/<name>/tasks.md` with `<name>`
 from the list. It never runs a shell: every call is an argument list, and
 change names come from `openspec list`, never typed input. Nothing goes
