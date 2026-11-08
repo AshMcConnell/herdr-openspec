@@ -58,7 +58,7 @@ The panel SHALL parse `tasks.md` into flat rows in file order: markdown headings
 
 ### Requirement: Display cap
 
-The fold-out SHALL show at most the first 120 rows; beyond that it SHALL show "+ N more in tasks.md" pointing at the file. Rows and section headings that do not fit their width SHALL truncate, and hovering one SHALL show its full text.
+The fold-out SHALL show at most the first 120 rows; beyond that it SHALL show "+ N more in tasks.md" pointing at the file. Rows and section headings that do not fit their width SHALL truncate. Resting the pointer on a task row or section heading SHALL show a styled hover card in the panel's own colours and surface, carrying the row's full text wrapped over as many lines as it needs rather than a single clipped line, and the card SHALL name the row's state — done or open for a task, section for a heading. The card SHALL stay open while the pointer moves from the row onto it.
 
 #### Scenario: Long list
 
@@ -68,16 +68,41 @@ The fold-out SHALL show at most the first 120 rows; beyond that it SHALL show "+
 #### Scenario: Hover for the full text
 
 - **WHEN** a task row is too long for the panel's width
-- **THEN** it truncates to the row and hovering shows the whole line
+- **THEN** it truncates to the row and resting the pointer on it shows a styled card with the whole line wrapped over multiple lines
+
+#### Scenario: Card stays open while reading
+
+- **WHEN** the pointer moves from a task row onto its open hover card
+- **THEN** the card stays open and the full text remains readable
+
+#### Scenario: Card names the task state
+
+- **WHEN** the pointer rests on a done task and then on an open task
+- **THEN** each card names that task's state, done or open
+
+#### Scenario: Section heading card
+
+- **WHEN** a section heading is too long for the panel's width
+- **THEN** it truncates and resting the pointer on it shows the full heading in a card that names it as a section
 
 ### Requirement: Click to toggle
 
-Clicking a task row SHALL flip that checkbox in `tasks.md` on the local machine only: the row flips at once (optimistically), the write replaces the file only if it still matches the copy the panel read (a compare-and-swap against the snapshot just read), and a rejected write SHALL re-read the file and retry once. Remote spaces SHALL be read-only — task rows there SHALL not respond to clicks.
+Clicking a task row SHALL flip that checkbox in `tasks.md` on the local machine only: the row flips at once (optimistically), the write replaces the file only if it still matches the copy the panel read (a compare-and-swap against the snapshot just read), and a rejected write SHALL re-read the file and retry once. A task's hover card SHALL offer the same flip as a button inside the card, on the local machine only: the button SHALL name the flip it performs, SHALL run the identical write path as a row click (one at a time, optimistic, compare-and-swap), and after the flip the card SHALL stay open and show the task's new state. Remote spaces SHALL be read-only — task rows there SHALL not respond to clicks, and their cards SHALL show no toggle button. Section heading cards SHALL show no toggle button.
 
 #### Scenario: Tick a task
 
 - **WHEN** the user clicks an open task in a local space
 - **THEN** the row flips to done at once, the file's checkbox line is rewritten to `[x]` with every other byte identical, and the counts follow when the refreshed list is read back
+
+#### Scenario: Tick from the card
+
+- **WHEN** the user rests on an open task's hover card and presses its button
+- **THEN** the task flips exactly once through the same write as a row click, and the open card names the task done with the button now offering to reopen it
+
+#### Scenario: Reopen from the card
+
+- **WHEN** the user presses the button in a done task's card
+- **THEN** the task flips back to open and the open card names it open
 
 #### Scenario: Concurrent edit wins
 
@@ -87,7 +112,12 @@ Clicking a task row SHALL flip that checkbox in `tasks.md` on the local machine 
 #### Scenario: Remote space
 
 - **WHEN** the change lives on a remote machine
-- **THEN** its task rows show state but do not respond to clicks
+- **THEN** its task rows show state but do not respond to clicks, and their cards carry no toggle button
+
+#### Scenario: Section heading
+
+- **WHEN** the user rests on a section heading's card
+- **THEN** the card shows the heading with no toggle button
 
 ### Requirement: Toggle failure reporting
 
