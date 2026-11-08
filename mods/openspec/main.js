@@ -199,17 +199,33 @@ const ago = (at) => {
     : `${Math.round(d / (86400000 * 30))}mo ago`;
 };
 
-// tasks.md -> flat rows: {section} headings and {done, line, text} checkbox
-// rows. Continuation lines of a wrapped task are dropped: a panel wants one
-// line each. Each checkbox remembers its line in the file — the click that
-// ticks it rewrites exactly that line.
+// tasks.md -> flat rows: {section} headings and {done, line, text, full}
+// checkbox rows. An indented continuation line folds into the task above it,
+// joined with a space — the same fold the markdown renderer gives a wrapped
+// list item — so `text` is the checkbox line's own text, the one a toggle
+// matches on, and `full` is the whole entry, the one every view shows. Each
+// checkbox remembers its line in the file — the click that ticks it rewrites
+// exactly that line.
 function taskRows(text) {
   const rows = [];
+  let cur = null;
   (text ?? "").split("\n").forEach((line, i) => {
     const head = /^#{1,6}\s+(.+)/.exec(line);
-    if (head) { rows.push({ section: head[1].trim() }); return; }
+    if (head) { rows.push({ section: head[1].trim() }); cur = null; return; }
     const box = /^\s*[-*]\s+\[( |x|X)\]\s+(.*)/.exec(line);
-    if (box) rows.push({ done: box[1].toLowerCase() === "x", line: i, text: box[2].trim() });
+    if (box) {
+      cur = { done: box[1].toLowerCase() === "x", line: i, text: box[2].trim() };
+      cur.full = cur.text;
+      rows.push(cur);
+      return;
+    }
+    const cont = /^ {2,}(\S.*)/.exec(line);
+    if (cont && cur) {
+      const piece = cont[1].trim();
+      cur.full = cur.full ? `${cur.full} ${piece}` : piece;
+      return;
+    }
+    cur = null;
   });
   return rows;
 }
@@ -1237,23 +1253,25 @@ export default class OpenSpec extends View {
       .anchor("top_left").open_delay(400).close_delay(250);
   }
 
-  // A task row: ✓ done / ○ open. A rest on the row (or a section heading)
-  // shows the hover card, because both truncate; done tasks read green when
-  // their change is complete; rows click to tick (toggle) in any space.
+  // A task row: ✓ done / ○ open, wrapping to the entry's whole text. A rest on
+  // the row (or on a section heading, which still truncates) shows the hover
+  // card; done tasks read green when their change is complete; rows click to
+  // tick (toggle) in any space.
   taskLine(row, t, name, complete) {
-    const { section, done, text, line } = row;
+    const { section, done, full, line } = row;
     if (section) {
       const head = div().id(`os-sec-${section}`).h(20).flex_none().flex().items_center().px(8).truncate()
         .text_size(10).font_semibold().text_color(t.dim).child(section);
       return Boolean(section) ? this.hoverCard(`os-sec-card-${section}`, head, "section", section) : head;
     }
-    const item = h_flex().id(`os-task-${line}`).h(18).flex_none().px(8).gap(7).items_center()
-      .child(div().w(11).flex_none().text_size(11).text_color(done ? green(t) : t.dim).child(done ? "✓" : "○"))
-      .child(div().flex_1().min_w(0).truncate().text_size(11)
-        .text_color(done ? (complete ? green(t) : t.dim) : t.foreground).child(text || " "))
+    const item = h_flex().id(`os-task-${line}`).min_h(18).flex_none().px(8).gap(7).items_start()
+      .child(div().w(11).flex_none().text_size(11).line_height("18px")
+        .text_color(done ? green(t) : t.dim).child(done ? "✓" : "○"))
+      .child(div().flex_1().min_w(0).text_size(11).line_height("18px")
+        .text_color(done ? (complete ? green(t) : t.dim) : t.foreground).child(full || " "))
       .cursor_pointer().hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => this.toggle(row, name, cx));
-    return Boolean(text) ? this.hoverCard(`os-task-card-${line}`, item, done ? "done" : "open", text,
+    return Boolean(full) ? this.hoverCard(`os-task-card-${line}`, item, done ? "done" : "open", full,
       (cx) => this.toggle(row, name, cx)) : item;
   }
 
@@ -1449,7 +1467,7 @@ export default class OpenSpec extends View {
       .child(div().flex_none().w(14).text_size(14).line_height("20px")
         .text_color(row.done ? NIGHT_MD.done : NIGHT.faint).child(row.done ? "✓" : "○"))
       .child(div().flex_1().min_w(0).text_size(13).line_height("20px")
-        .text_color(complete ? NIGHT_MD.done : NIGHT.fg).child(row.text || " "));
+        .text_color(complete ? NIGHT_MD.done : NIGHT.fg).child(row.full || " "));
     if (!this.machine) {
       el.cursor_pointer().hover((s) => s.bg(NIGHT.bgAlt)).on_click((_e, cx) => this.toggleTask(row, cx));
     }

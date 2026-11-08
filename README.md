@@ -64,13 +64,15 @@ does not change that repository; it stays on the last terminal you focused.
   herdr-core's exact-text edit on the machine and is checked against a
   re-read). Opening a
   change's row also switches an open viewer to that change; clicking the open
-  row again only folds the tasks away. Rows truncate to the panel; resting
-  the pointer on one shows a styled multi-line card with the full text, named
+  row again only folds the tasks away. Task rows show the entry's whole text —
+  continuation lines of a wrapped `tasks.md` entry included — wrapped over as
+  many lines as it takes; resting the pointer on one shows a styled multi-line
+  card with the same full text, named
   with the task's state (✓ done or ○ open) and, on a task card, a
   "✓ Mark done" / "↺ Reopen" button that ticks the task straight from the
   card — in any space; section cards show no button. A too-long section
-  heading gets the same card, labelled `section`. Click the change again to
-  fold it away.
+  heading truncates to the panel and gets the same card, labelled `section`.
+  Click the change again to fold it away.
 - **Archive** (the box button): first click turns it into a red
   **Archive?** chip; second click runs `openspec archive <name> --yes`. It
   cancels if you click anything else or wait a few seconds. While it runs the
@@ -185,10 +187,10 @@ own `view` and `open` commands — no new programs, no files and no network.
   OpenSpec's own warning instead of asking.
 - **Remote spaces poll** every 15 seconds rather than watching files (Herdr's
   folder watch is local-only).
-- **Long task lines** truncate to the row (the full text shows in a hover
-  card); continuation lines of a wrapped task in `tasks.md` aren't shown, and lists
-  past 120 tasks point at the file. Only the tasks shown can be ticked from
-  the panel.
+- **Long task rows wrap** — continuation lines of a wrapped task in
+  `tasks.md` are folded into their entry — while a too-long section heading
+  truncates to the row and shows in full in its hover card; lists past 120
+  rows point at the file. Only the tasks shown can be ticked from the panel.
 - **The filter matches change names** — not task text or specs.
 - **"Nearly done" means at most 2 tasks remain** — a fixed threshold, not a
   percentage; state chips and the state grouping use it.

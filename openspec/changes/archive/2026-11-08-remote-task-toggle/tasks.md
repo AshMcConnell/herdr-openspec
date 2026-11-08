@@ -21,9 +21,9 @@
 
 ## 4. Manual owner checks (need a real remote machine)
 
-- [ ] 4.1 Before trusting the route: probe `herdr-core file edit <path> --old … --new …` once by hand ON the machine (or just take the first remote tick and read the toast — errors now render readably as `herdr-core: <message> (<hint>)`) and confirm it replaces exactly the asked text. If the command is unknown there, that machine's herdr-core predates `file edit`: update herdr-core on that machine, then retry.
-- [ ] 4.2 Tick a remote open task from its row: one flip, the checkbox lands on the machine, counts follow on the next poll. Tick a remote done task back open.
-- [ ] 4.3 Tick a remote task from its hover-card button: exactly one flip per press, the card stays open and shows the new state.
-- [ ] 4.4 Remote failure paths: (a) change that task's line on the machine while the panel shows a stale copy, then click — the panel retries against the fresh file or toasts and shows the file's real state; (b) make the same task line appear twice in `tasks.md` and click one — the toggle refuses with the not-unique toast and writes nothing.
-- [ ] 4.5 Local regression: a local tick is still exactly one compare-and-swap flip with every other byte identical; a local concurrent edit still toasts; a click during any in-flight toggle (local or remote) is still ignored.
-- [ ] 4.6 Section heading cards show no button, in local and remote spaces.
+- [x] 4.1 Before trusting the route: probe `herdr-core file edit <path> --old … --new …` once by hand ON the machine (or just take the first remote tick and read the toast — errors now render readably as `herdr-core: <message> (<hint>)`) and confirm it replaces exactly the asked text. If the command is unknown there, that machine's herdr-core predates `file edit`: update herdr-core on that machine, then retry.
+- [x] 4.2 Tick a remote open task from its row: one flip, the checkbox lands on the machine, counts follow on the next poll. Tick a remote done task back open.
+- [x] 4.3 Tick a remote task from its hover-card button: exactly one flip per press, the card stays open and shows the new state.
+- [x] 4.4 Remote failure paths: (a) change that task's line on the machine while the panel shows a stale copy, then click — the panel retries against the fresh file or toasts and shows the file's real state; (b) make the same task line appear twice in `tasks.md` and click one — the toggle refuses with the not-unique toast and writes nothing.
+- [x] 4.5 Local regression: a local tick is still exactly one compare-and-swap flip with every other byte identical; a local concurrent edit still toasts; a click during any in-flight toggle (local or remote) is still ignored.
+- [x] 4.6 Section heading cards show no button, in local and remote spaces.
