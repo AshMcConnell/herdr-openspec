@@ -10,12 +10,12 @@ write should too.
 
 ## What Changes
 
-- **Remote ticks go through the herdr CLI's exact-text edit**: a remote
-  toggle re-reads `tasks.md` on the machine, builds an exact old/new pair for
-  that one checkbox line (with neighbouring context until the old text matches
-  exactly one place in the file), runs `herdr file edit --on <machine> <path>
-  --old … --new …`, then re-reads and verifies the flip landed exactly once
-  before accepting it. Anything that cannot land or verify reverts the
+- **Remote ticks go through herdr-core's exact-text edit on the machine**: a
+  remote toggle re-reads `tasks.md` on the machine, builds an exact old/new
+  pair for that one checkbox line (with neighbouring context until the old
+  text matches exactly one place in the file), runs `herdr-core file edit
+  <path> --old … --new …` there, then re-reads and verifies the flip landed
+  exactly once before accepting it. Anything that cannot land or verify reverts the
   optimistic flip and toasts, exactly like the local failure path.
 - **Local ticks are untouched**: same compare-and-swap `writeTextFile`, same
   one-retry-against-a-fresh-read, byte-identical behaviour.

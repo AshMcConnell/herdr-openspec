@@ -1134,18 +1134,23 @@ export default class OpenSpec extends View {
 
   // The write a task click makes, shared by local and remote spaces. Locally
   // it is writeTextFile's compare-and-swap against the snapshot — the same
-  // call, the same exceptions, unchanged. On a remote machine it is the herdr
-  // CLI's exact-text edit there: an old/new pair naming one line exactly (the
-  // flipPair guard), then a re-read proving the flip landed exactly once. A
-  // pair that changes nothing means the file already holds the asked state,
-  // so it is accepted as it stands, as the local write would be.
+  // call, the same exceptions, unchanged. On a remote machine it is herdr-core
+  // running there (exec's `on` routes the whole process to the machine) and
+  // its exact-text edit: an old/new pair naming one line exactly (the flipPair
+  // guard), then a re-read proving the flip landed exactly once. Not the app's
+  // `herdr` CLI (no `file` subcommand — its usage error was the first live
+  // tick) and not `--on` (herdr-core's local machine registry is empty, so it
+  // cannot route from here); running on the machine needs no registry, and
+  // `this.root` is a valid cwd there. A pair that changes nothing means the
+  // file already holds the asked state, so it is accepted as it stands, as the
+  // local write would be.
   // Returns the settled text to show; throws when it cannot land or verify.
   async writeFlip(path, body, next, line, task, to) {
     if (!this.on) { await writeTextFile(path, next, body); return next; }
     const pair = flipPair(body, line, next);
     if (pair === null) throw "the task changed under the click";
     if (pair.old === pair.neu) return body;
-    const r = await exec("herdr", ["file", "edit", "--on", this.on, path, "--old", pair.old, "--new", pair.neu]);
+    const r = await exec("herdr-core", ["file", "edit", path, "--old", pair.old, "--new", pair.neu], { cwd: this.root, on: this.on });
     if (r.code !== 0) throw ((r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop() ?? "").slice(0, 300);
     const reread = await readTextFile(path, { on: this.on });
     if (reread === null) throw "tasks.md is gone";

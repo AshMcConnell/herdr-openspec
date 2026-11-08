@@ -159,9 +159,10 @@ Herdr's file reader, on the pane's machine for remote spaces. Ticking a task
 is a file write, not a command. On this machine `writeTextFile` replaces that
 change's `tasks.md` only if it still matches what the panel read (a lost race
 rejects the write rather than overwriting anyone). On a remote machine it is
-`herdr file edit --on <machine>`: one checkbox line's exact text is replaced,
-widened with neighbouring context until it matches one place only, and the
-result is verified against a re-read before the panel accepts it. Either way
+`herdr-core file edit` on the pane's machine: one checkbox line's exact text
+is replaced, widened with neighbouring context until it matches one place
+only, and the result is verified against a re-read before the panel accepts
+it. Either way
 the write is only ever at `openspec/changes/<name>/tasks.md` with `<name>`
 from the list. It never runs a shell: every call is an argument list, and
 change names come from `openspec list`, never typed input. Nothing goes

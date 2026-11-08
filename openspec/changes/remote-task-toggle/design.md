@@ -22,10 +22,10 @@ The blocker is the kit's write primitive. In `mods/openspec/gpui-kit.d.ts`:
 - `hc(args)` (22217) runs herdr-core locally.
 
 So there is no machine-aware write in the kit; a remote tick must go through
-the herdr CLI's file surface: `file read|write|edit [--on <machine>] <path>`,
+herdr-core's file surface: `file read|write|edit [--on <machine>] <path>`,
 where `edit` is an exact-text replace via `--old X --new Y`. Nothing in this
-repo's docs (README.md, RECIPE.md, specs) mentions that CLI surface — it is
-the owner's documentation of the CLI and must be verified at runtime (Risks).
+repo's docs (README.md, RECIPE.md, specs) mentions that file surface — it was
+verified against the real CLI at runtime (see Decisions).
 
 ## Goals
 
@@ -57,24 +57,27 @@ required, not preferred.** The d.ts quote in Context is the whole story: the
 write primitive's signature has three parameters and no options bag. The
 first design question (is there a kit write with `on`?) answers no.
 
-**Vehicle: `exec("herdr", ["file", "edit", "--on", machine, path, "--old",
-old, "--new", new])` — run the CLI where the panel runs and let `--on` route
-the edit to the machine.** Reasoning: the CLI documents `--on <machine>` as
-its machine selector, which only makes sense when the CLI runs off-machine
-and routes the write through Herdr — the same routing `exec`'s `on` uses
-("through herdr-core"). This also removes the "is `herdr` on the
-remote machine's PATH?" risk entirely: the binary is needed only on the
-machine running the app, which is the install the owner documented. The file
-argument is absolute (`${this.root}/openspec/changes/${name}/tasks.md`,
-`this.root` from `git rev-parse --show-toplevel` on the machine) and the
-CLI's `--on` names the machine, so no `cwd` option is passed — note that
-`this.root` is a *remote* path and must not be used as a local `cwd`.
-Runtime caveat and fallbacks (one-line swap inside the helper, see Risks):
-if the local form is refused, run it on the machine instead —
-`exec("herdr", ["file", "edit", path, "--old", old, "--new", new], { cwd:
-this.root, on: machine })` — or route through the kit's
-`hc(["file", "edit", "--on", machine, …])` (add `hc` to the import at
-main.js:18). `toggle()` never learns which vehicle ran.
+**Vehicle: `exec("herdr-core", ["file", "edit", path, "--old", old, "--new",
+neu], { cwd: this.root, on: machine })` — run herdr-core on the machine and
+let the kit's `exec` route the whole process there.** Reasoning: `exec`'s
+`on` uses the same routing the reads already use, so the edit runs where
+`tasks.md` lives with `this.root` as its cwd; the absolute file argument is
+`${this.root}/openspec/changes/${name}/tasks.md`. No `--on` is needed because
+the process is already on the machine. Runtime evidence settled the vehicle
+after the first live tick: the app's `herdr` binary is the app's workspace
+CLI and has **no `file` subcommand** — that tick came back "run 'herdr
+--help' for usage", and that surface lives in `herdr-core`; `herdr-core
+machine ls` is `{"machines":[]}` locally, so `--on <machine>` has no local
+registry to route through. The on-machine run needs no registry at all.
+`file edit` was probed green: `herdr-core file edit <abs-path> --old X --new
+Y` replaced exactly once (exit 0) and refused a duplicate with "the old text
+is in the file 2 times" (exit 1, nothing written). Fallbacks, now unlikely
+(one-line swap inside the helper, see Risks): route through the kit's
+`hc(["file", "edit", path, "--old", old, "--new", new])` (add `hc` to the
+import at main.js:18), or, once herdr-core's local registry holds the
+machine, the off-machine form `exec("herdr-core", ["file", "edit", "--on",
+machine, path, "--old", old, "--new", new])`. `toggle()` never learns which
+vehicle ran.
 
 **Guard: read → build exact old/new → edit → re-read → verify.** This is the
 remote analogue of the local compare-and-swap:
@@ -102,11 +105,12 @@ remote analogue of the local compare-and-swap:
    nothing — the file already holds the asked state — so the helper hands it
    back and `writeFlip` returns the read text as settled without running an
    edit, the silent accept the local compare-and-swap gives.
-3. **The edit.** `exec("herdr", ["file", "edit", "--on", machine, path,
-   "--old", old, "--new", neu])`; a non-zero exit throws with the last
-   stderr/stdout line (same reporting shape as the archive button). If the
-   file drifted on the clicked line, `--old` matches nowhere and the edit
-   fails — that maps onto the existing "stale snapshot" retry exactly.
+3. **The edit.** `exec("herdr-core", ["file", "edit", path, "--old", old,
+   "--new", neu], { cwd: this.root, on: machine })`; a non-zero exit throws
+   with the last stderr/stdout line (same reporting shape as the archive
+   button). If the file drifted on the clicked line, `--old` matches nowhere
+   and the edit fails — that maps onto the existing "stale snapshot" retry
+   exactly.
 4. **Verify.** Re-read with `readTextFile(path, { on: machine })`; null →
    throw "tasks.md is gone". Accept only if `occurs(reread, neu) === 1 &&
    occurs(reread, old) === 0` — the flip landed exactly once. Anything else
@@ -148,16 +152,17 @@ stays meaningful — it now describes section cards only.
 
 ## Risks / Trade-offs
 
-- **The `herdr file edit` surface is not evidenced in this repo.** README and
-  RECIPE document `herdr-app` commands only; the flags come from the owner.
-  The first manual check probes the exact invocation before anything is
-  trusted; if the local form is refused, the one-line vehicle swap in the
-  helper (on-machine `exec`, or `hc([...])`) is the fix, not a redesign.
-- **`--old/--new` semantics (replace-all vs first match) are unverified.**
-  Both are made safe: the uniqueness rule refuses any old text that appears
-  more than once in the file, and the post-write verify would catch a
-  multi-replace that slipped through (old gone but new present twice →
-  fail). Worst case is a refused toggle and a toast, never a corrupted file.
+- **The `herdr-core file edit` surface was probed, not assumed.** The app's
+  `herdr` binary has no `file` subcommand (its usage error was the first live
+  tick), and `herdr-core machine ls` is empty locally, so `--on` cannot route
+  from here; running herdr-core on the machine needs no registry. The probe
+  replaced exactly once (exit 0) and refused a duplicate ("the old text is in
+  the file 2 times", exit 1, nothing written). The remote leg still needs the
+  owner's first real tick on a machine (manual checks).
+- **`--old/--new` semantics:** a uniquely matching old text is replaced
+  exactly once and a duplicate is refused, so a silent replace-all cannot
+  happen. The uniqueness rule and post-write verify stay as belt and braces;
+  worst case is a refused toggle and a toast, never a corrupted file.
 - **Race between the edit and the verify re-read.** A concurrent write in
   that window can fail verification although our flip landed — the panel then
   reverts the optimistic row and toasts, while the file (the truth) shows the
