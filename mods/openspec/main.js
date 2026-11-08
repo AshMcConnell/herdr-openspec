@@ -1146,19 +1146,23 @@ export default class OpenSpec extends View {
   // running there (exec's `on` routes the whole process to the machine) and
   // its exact-text edit: one checkbox line's exact bytes as `--old` and the
   // flipped line as `--new`, then a re-read whose same line must hold the
-  // flipped text. Not the app's `herdr` CLI (no `file` subcommand — its usage
-  // error was the first live tick) and not `--on` (herdr-core's local machine
-  // registry is empty, so it cannot route from here); running on the machine
-  // needs no registry, and `this.root` is a valid cwd there. A pair that
-  // changes nothing means the file already holds the asked state, so it is
-  // accepted as it stands, as the local write would be.
+  // flipped text. The values ride in the `=` form (`--old=<line>`): every task
+  // line begins with `- [ ]`, and clap reads a dash-leading value after a
+  // separate `--old` as a flag — the live "unexpected argument '-'" toast;
+  // `=` passes it verbatim (probed green). Not the app's `herdr` CLI (no
+  // `file` subcommand — its usage error was the first live tick) and not
+  // `--on` (herdr-core's local machine registry is empty, so it cannot route
+  // from here); running on the machine needs no registry, and `this.root` is a
+  // valid cwd there. A pair that changes nothing means the file already holds
+  // the asked state, so it is accepted as it stands, as the local write would
+  // be.
   // Returns the settled text to show; throws when it cannot land or verify.
   async writeFlip(path, body, next, line, task, to) {
     if (!this.on) { await writeTextFile(path, next, body); return next; }
     const pair = flipPair(body, line, next);
     if (pair === null) throw "the task changed under the click";
     if (pair.old === pair.neu) return body;
-    const r = await exec("herdr-core", ["file", "edit", path, "--old", pair.old, "--new", pair.neu], { cwd: this.root, on: this.on });
+    const r = await exec("herdr-core", ["file", "edit", path, `--old=${pair.old}`, `--new=${pair.neu}`], { cwd: this.root, on: this.on });
     if (r.code !== 0) throw exitDetail(r);
     const reread = await readTextFile(path, { on: this.on });
     if (reread === null) throw "tasks.md is gone";

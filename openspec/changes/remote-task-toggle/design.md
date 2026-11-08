@@ -72,12 +72,11 @@ registry to route through. The on-machine run needs no registry at all.
 `file edit` was probed green: `herdr-core file edit <abs-path> --old X --new
 Y` replaced exactly once (exit 0) and refused a duplicate with "the old text
 is in the file 2 times" (exit 1, nothing written). The first tick over the
-exec hop then still came back with a herdr-core usage error (a JSON object,
-clipped by the toast), so two suspects remain — the values mangled in transit
-to the machine, or a herdr-core there older than `file edit`. The helper now
-sends single-line values only and Guard step 3 reports the CLI's own message,
-so the next tick says which; the second's remedy is updating herdr-core on
-that machine. Fallbacks, now unlikely
+exec hop then came back with a herdr-core usage error (a JSON object, clipped
+by the toast): clap was parsing the task line's leading `-` as a flag,
+because `--old` stood apart from a value beginning `- [ ]`. Guard step 3's `=`
+form (`--old=… --new=…`) passes the line verbatim — reproduced and fixed
+locally — and its readable error parse is what surfaced the cause. Fallbacks, now unlikely
 (one-line swap inside the helper, see Risks): route through the kit's
 `hc(["file", "edit", path, "--old", old, "--new", new])` (add `hc` to the
 import at main.js:18), or, once herdr-core's local registry holds the
@@ -111,16 +110,17 @@ remote analogue of the local compare-and-swap:
    the helper hands it back and `writeFlip` returns the read text as settled
    without running an edit, the silent accept the local compare-and-swap
    gives.
-3. **The edit.** `exec("herdr-core", ["file", "edit", path, "--old", old,
-   "--new", neu], { cwd: this.root, on: machine })`. A non-zero exit throws
+3. **The edit.** `exec("herdr-core", ["file", "edit", path, `--old=${old}`,
+   `--new=${neu}`], { cwd: this.root, on: machine })`. The values ride in the
+   `=` form, not as separate argv entries: every task line begins with
+   `- [ ]`, and clap parses a dash-leading value after a separate `--old` as
+   a flag — the live "unexpected argument '-' … use '--'" usage toast; the
+   `=` form passes it verbatim (probed green locally). A non-zero exit throws
    `exitDetail(r)`: the last non-empty stderr line, else stdout's, parsed as
    JSON gives `herdr-core: <error.message> (<hint>)`, otherwise the raw line
-   cut to 300 chars (the archive button's shape). The readable message settles
-   the open question — a malformed-values complaint means the argv hop is
-   mangling them; an unknown-command complaint means the machine's
-   herdr-core predates `file edit` and needs updating there. If the file
-   drifted on the clicked line, `--old` matches nowhere and the edit fails —
-   that maps onto the existing "stale snapshot" retry exactly.
+   cut to 300 chars (the archive button's shape). If the file drifted on the
+   clicked line, `--old` matches nowhere and the edit fails — that maps onto
+   the existing "stale snapshot" retry exactly.
 4. **Verify by line index.** Re-read with `readTextFile(path, { on: machine
    })`; null → throw "tasks.md is gone". Accept only when
    `reread.split("\n")[line] === next.split("\n")[line]` — the clicked line
@@ -166,18 +166,18 @@ stays meaningful — it now describes section cards only.
 
 ## Risks / Trade-offs
 
-- **The `herdr-core file edit` surface was probed, not assumed.** The app's
-  `herdr` binary has no `file` subcommand (its usage error was the first live
-  tick), and `herdr-core machine ls` is empty locally, so `--on` cannot route
-  from here; running herdr-core on the machine needs no registry. The local
-  probe replaced exactly once (exit 0) and refused a duplicate ("the old text
-  is in the file 2 times", exit 1, nothing written). The first tick over the
-  exec hop still came back with a herdr-core usage error, so one of two
-  suspects remains: the `--old/--new` values mangled in transit, or a
-  herdr-core on that machine older than `file edit` (remedy: update it
-  there). Single-line values and the readable error parse in Guard step 3
-  make the next toast name the cause. The remote leg still needs the owner's
-  first real tick on a machine (manual checks).
+- **The `herdr-core file edit` surface was probed, not assumed — and its argv
+  shape too.** The app's `herdr` binary has no `file` subcommand (its usage
+  error was the first live tick), and `herdr-core machine ls` is empty
+  locally, so `--on` cannot route from here; running herdr-core on the
+  machine needs no registry. The local probe replaced exactly once (exit 0)
+  and refused a duplicate ("the old text is in the file 2 times", exit 1,
+  nothing written). The live tick after the vehicle swap still failed with a
+  usage error: clap read the task line's leading `-` as a flag, because
+  `--old` stood apart from a value beginning `- [ ]` (reproduced locally;
+  `--old=… --new=…` passes the line verbatim and the toggle lands). The `=`
+  form fixed it. The remote leg still needs the owner's first real tick on a
+  machine (manual checks).
 - **`--old/--new` semantics:** a uniquely matching old text is replaced
   exactly once and a duplicate is refused, so a silent replace-all cannot
   happen. The uniqueness rule and post-write verify stay as belt and braces;
