@@ -51,14 +51,14 @@
 
 ## 4. Manual owner checks
 
-- [ ] In change p145 (or any change with multi-line entries), fold out the row:
+- [x] In change p145 (or any change with multi-line entries), fold out the row:
   entry 4.1 reads in full — "(set the key, not" and its continuation lines as
   one wrapped row — and so does 4.2; the same full text shows on the viewer's
   tasks tab and in the hover card.
-- [ ] Tick a multi-line entry locally and again on a remote pane: only the
+- [x] Tick a multi-line entry locally and again on a remote pane: only the
   checkbox line flips and the continuation lines are byte-identical afterwards
   (`git diff` shows exactly one changed line).
-- [ ] On a remote pane, tick an entry whose checkbox line is identical to
+- [x] On a remote pane, tick an entry whose checkbox line is identical to
   another entry's (their continuations differ): it refuses with the
   "the task's line is not unique in tasks.md" toast and the file is unchanged.
-- [ ] A blank checkbox line still renders as a blank row with no hover card.
+- [x] A blank checkbox line still renders as a blank row with no hover card.
