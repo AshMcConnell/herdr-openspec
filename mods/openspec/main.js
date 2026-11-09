@@ -16,7 +16,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, HoverCard, InputState, Input, Tabs, Tab } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings, shared, setShared, nextCommand } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings, shared, setShared, knownAgents, nextCommand } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
 // focused pane's (or focused layout terminal block's) live folder, else the
@@ -66,6 +66,8 @@ const VIEWS = "openspec.views";     // { [id]: { [seq]: { id, seq, file, change,
 const ACK = "openspec.view.ack";    // { [seq]: id }
 const QUIET = "openspec.view.quiet";// { [id]: ms } a viewer that did not answer
 const OPENS = "openspec.opens";     // { [panel]: { panel, name, root, on, seq, at } }
+const FAILED = "openspec.archive-failed"; // { [panel]: { panel, name, detail, root, on, space, seq, at } }
+const DIALOG = "openspec.archive-dialog"; // the newest failure dialog's overlay id
 const VIEW_ACK_MS = 700;
 const VIEW_QUIET_MS = 15000;
 const OPEN_AGE_MS = 60000;
@@ -191,6 +193,43 @@ function openRequests() {
     .slice(-VIEWER_CAP));
 }
 
+// Failure offers older than a minute are dead: the toast that could replay them
+// has gone. Swept on every write, like openRequests.
+function failedOffers() {
+  const now = Date.now();
+  return Object.fromEntries(Object.entries(mapOf(FAILED))
+    .filter(([, r]) => r && typeof r.at === "number" && now - r.at < OPEN_AGE_MS)
+    .sort((a, b) => a[1].at - b[1].at)
+    .slice(-VIEWER_CAP));
+}
+
+// Drop one panel copy's offer, but only while the stored record is still the
+// one this dialog was opened for: a newer failure's record must survive. The
+// write goes through the age-swept map, so an offer that outlived its minute
+// is swept out of the persisted store too, not just hidden from readers.
+function forgetFailed(panel, seq) {
+  const r = mapOf(FAILED)[panel];
+  if (!r || r.seq !== seq) return;
+  const next = failedOffers();
+  delete next[panel];
+  setShared(FAILED, next);
+}
+
+// One failure dialog at a time: close the one already shown (a newer failure
+// or the toast action replaces it), then open this offer. DIALOG is cleared
+// before the old overlay closes, so the replaced copy's close() insurance no
+// longer sees itself as the live dialog and cannot drop the record out from
+// under the dialog about to open — the toast action re-opens the same offer,
+// seq included, in a fresh copy.
+function openFailureDialog(offer) {
+  const current = shared(DIALOG);
+  if (typeof current === "string" && current) {
+    setShared(DIALOG, null);
+    closeOverlay(current);
+  }
+  setShared(DIALOG, openOverlay({ mod: "openspec", props: { archiveFailed: offer }, kind: "dialog", modal: true, width: 420 }));
+}
+
 const ago = (at) => {
   if (!at) return "";
   const d = Math.max(0, Date.now() - at);
@@ -277,9 +316,18 @@ function exitDetail(r) {
   const last = lastLine(r.stderr) ?? lastLine(r.stdout) ?? `exit ${r.code}`;
   try {
     const err = JSON.parse(last)?.error;
-    if (err && typeof err.message === "string") return `herdr-core: ${err.message}${err.hint ? ` (${err.hint})` : ""}`;
+    if (err && typeof err.message === "string") return `herdr-core: ${err.message}${err.hint ? ` (${err.hint})` : ""}`.slice(0, 300);
   } catch { /* not JSON: report the line itself */ }
   return last.slice(0, 300);
+}
+
+// The same shape for a thrown value — `exec` rejecting (machine gone, spawn
+// failed) rather than exiting non-zero: the thrown text's last non-empty
+// line, never empty, at most 300 characters, so the toast body keeps the
+// spec's guarantee whatever the rejection carried.
+function thrownDetail(e) {
+  const last = `${e ?? ""}`.split("\n").filter((l) => l.trim()).pop();
+  return (last ?? "the archive command could not run").slice(0, 300);
 }
 
 // The archive button sits on every row (completed ones a touch brighter);
@@ -674,6 +722,25 @@ export default class OpenSpec extends View {
       });
       return;
     }
+    // The archive-failure offer: a modal dialog with no list, no polls and no
+    // folder watch. An overlay does not take focus on its own, so the view
+    // focuses itself and Esc reaches its key handler. `knownAgents` lands in
+    // `this.agents`; while it is pending (or when it rejects) the list reads
+    // empty and the button copies the command instead.
+    if (props()?.archiveFailed && typeof props().archiveFailed === "object") {
+      const offer = props().archiveFailed;
+      this.failed = { panel: offer.panel, name: offer.name, detail: offer.detail, root: offer.root,
+        on: offer.on ?? null, space: offer.space ?? null, seq: offer.seq };
+      this.overlay = typeof props()?.overlay === "string" ? props().overlay : null;
+      this.dispatched = false;
+      this.agents = null;
+      cx.spawn(async () => {
+        try { this.agents = await knownAgents({ on: this.failed.on }); }
+        catch { this.agents = []; }
+      });
+      this.handle.focus();
+      return;
+    }
     this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.toggling = null;
     this.root = null; this.on = null; this.watched = null;
     this.error = null; this.loading = false;
@@ -696,7 +763,10 @@ export default class OpenSpec extends View {
         let command;
         try { command = await nextCommand(); }
         catch { return; }
-        try { if (command === "open") this.acceptOpen(cx); }
+        try {
+          if (command === "open") this.acceptOpen(cx);
+          else if (command === "archive-ai") this.acceptArchiveFailed();
+        }
         catch { /* one bad wake must not end menu handling for this copy */ }
       }
     });
@@ -774,6 +844,16 @@ export default class OpenSpec extends View {
     if (!req || req.panel !== this.panelId || req.seq === this.handledOpen) return;
     this.handledOpen = req.seq;
     this.requestViewer(req.name, cx, { root: req.root ?? null, on: req.on ?? null, openIfNone: true });
+  }
+
+  // The failure toast's action: this copy opens the offer it recorded. A press
+  // while the dialog is up replaces it rather than stacking a second modal; a
+  // record already dismissed or dispatched is gone, so nothing opens.
+  acceptArchiveFailed() {
+    if (this.closed) return;
+    const offer = failedOffers()[this.panelId];
+    if (!offer || offer.panel !== this.panelId) return;
+    openFailureDialog(offer);
   }
 
   // Ask an open viewer for this repository and machine to show `name`, trying
@@ -921,6 +1001,15 @@ export default class OpenSpec extends View {
   // a copy that is gone.
   close(_cx) {
     this.closed = true;
+    // Insurance, and the host-close path: when the host closes the dialog
+    // itself (d.ts 22556 lets Esc close the top dialog before the key event
+    // reaches the view), its record still goes — but only while this copy is
+    // the dialog DIALOG names, so a replacement (the toast action, a newer
+    // failure) never loses the record it just opened with. forgetFailed's seq
+    // check keeps a straggler from dropping a newer failure's record either.
+    if (this.failed && this.overlay && shared(DIALOG) === this.overlay) {
+      forgetFailed(this.failed.panel, this.failed.seq);
+    }
     if (this.viewerId) {
       this.stopRefresh();
       forgetViewer(this.viewerId);
@@ -1136,6 +1225,7 @@ export default class OpenSpec extends View {
   archive(name, cx) {
     if (this.busy || !this.root) return;
     const { cwd, on } = location(), context = key();
+    const root = this.root, space = spaces().find((s) => s.active)?.id ?? null;
     if (!cwd) return;
     this.busy = name; this.confirming = null;
     cx.spawn(async (cx) => {
@@ -1143,15 +1233,27 @@ export default class OpenSpec extends View {
       try {
         const r = await exec("openspec", ["archive", name, "--yes"], { cwd, on });
         ok = r.code === 0;
-        detail = ok ? `openspec archive ${name}` : ((r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop() ?? "").slice(0, 300);
-      } catch (e) { detail = String(e); }
-      if (key() === context) {
-        if (this.open === name) { this.open = null; this.tasks = []; }
-        this.refresh(cx);
-      }
+        detail = ok ? `openspec archive ${name}` : exitDetail(r);
+      } catch (e) { detail = thrownDetail(e); }
+      // Report first, then refresh: a throwing refresh (or a released view)
+      // must not swallow the report or leave the panel busy.
       this.busy = null;
-      notify({ title: ok ? "Change archived" : "Archive failed", body: detail, level: ok ? "success" : "error" });
-      cx.notify();
+      if (!ok) {
+        const offer = { panel: this.panelId, name, detail, root, on: on ?? null, space, seq: uid(), at: Date.now() };
+        setShared(FAILED, { ...failedOffers(), [this.panelId]: offer });
+        notify({ title: "Archive failed", body: detail, level: "error", action: { name: "openspec.archive-ai" } });
+        openFailureDialog(offer);
+      } else {
+        notify({ title: "Change archived", body: detail, level: "success" });
+      }
+      let same = false;
+      try { same = key() === context; }
+      catch { /* a released view cannot read its context; the report already stands */ }
+      if (same) {
+        if (this.open === name) { this.open = null; this.tasks = []; }
+        try { this.refresh(cx); } catch { /* the view may be gone; the report already stands */ }
+      }
+      try { cx.notify(); } catch { /* a released view cannot repaint */ }
     });
     cx.notify();
   }
@@ -1318,6 +1420,72 @@ export default class OpenSpec extends View {
         })));
   }
 
+  // The archive-failure dialog: a small Tokyo Night card naming the change and
+  // the error, offering an agent hand-off. It is modal (a click beside it does
+  // nothing) and takes the keyboard itself so Esc can consume the offer.
+  failureView() {
+    const name = this.failed.name;
+    return v_flex().id("openspec-archive-failed").w_full().p(16).gap(10)
+      .bg(NIGHT.bg).border_1().border_color(NIGHT.border).rounded(10)
+      .text_color(NIGHT.fg).text_size(13)
+      .track_focus(this.handle)
+      .on_key_down((e, _cx) => {
+        if (e.key !== "escape") return;
+        this.dismiss();
+      })
+      .child(div().text_size(15).font_semibold().text_color(NIGHT_MD.h[0]).child("Archive failed"))
+      .child(div().text_size(12).line_height("18px").text_color(NIGHT.error).child(this.failed.detail || "the archive did not finish"))
+      .child(div().text_size(12.5).line_height("18px").text_color(NIGHT.muted).child(`Archive ${name} using AI?`))
+      .child(h_flex().justify_end().gap(8)
+        .child(div().id("openspec-archive-ai").h(28).px(12).flex().items_center().rounded(6).cursor_pointer()
+          .bg(NIGHT.accent).text_color(NIGHT.bg).text_size(12).font_semibold()
+          .hover((s) => s.bg(NIGHT_MD.link))
+          .on_click((_e, cx) => this.archiveWithAI(cx))
+          .child("Archive using AI"))
+        .child(div().id("openspec-archive-dismiss").h(28).px(12).flex().items_center().rounded(6).cursor_pointer()
+          .border_1().border_color(NIGHT.border).text_color(NIGHT.muted).text_size(12)
+          .hover((s) => s.bg(NIGHT.bgAlt).text_color(NIGHT.fg))
+          .on_click((_e, _cx) => this.dismiss())
+          .child("Dismiss")));
+  }
+
+  // Dismiss/Esc: the offer is spent, so its record goes before the dialog.
+  dismiss() {
+    forgetFailed(this.failed.panel, this.failed.seq);
+    closeOverlay(props().overlay);
+  }
+
+  // The clipboard fallback: the command plus a toast saying where it went.
+  copyCommand(cx) {
+    cx.write_to_clipboard(`/opsx-archive ${this.failed.name}`);
+    notify({ title: "Copied — paste it into your agent", level: "info" });
+  }
+
+  // Archive using AI: start an installed agent on the change, or copy the
+  // command when there is none (or the list is still loading or unreadable).
+  // The host calls run while this view is alive; the record goes after them,
+  // then the dialog closes, so a throw cannot leave a spent button over no
+  // offer. A second rapid press is refused by `dispatched`.
+  archiveWithAI(cx) {
+    if (this.dispatched) return;
+    this.dispatched = true;
+    const agent = Array.isArray(this.agents) ? this.agents.find((a) => a.installed) : null;
+    try {
+      if (agent) run("tab.new", { space: this.failed.space, folder: this.failed.root, argv: agent.run, task: `/opsx-archive ${this.failed.name}` });
+      else this.copyCommand(cx);
+    } catch {
+      try { this.copyCommand(cx); }
+      catch {
+        // Nothing left to offer — the tab and the clipboard both failed — but
+        // the person must still learn the command before the offer goes.
+        try { notify({ title: "Could not hand off the archive", body: `Run by hand: /opsx-archive ${this.failed.name}`, level: "error" }); }
+        catch { /* even the toast is unreachable; nothing can report */ }
+      }
+    }
+    forgetFailed(this.failed.panel, this.failed.seq);
+    closeOverlay(props().overlay);
+  }
+
   // The right-click popup on a row: MENU's items over the list. Esc and a
   // click beside it close it (the host does both); ↑/↓/Enter pick.
   menuView(t) {
@@ -1478,6 +1646,7 @@ export default class OpenSpec extends View {
     const t = theme();
     if (typeof props()?.menuFor === "string") return this.menuView(t);
     if (typeof props()?.file === "string") return this.changeView();
+    if (props()?.archiveFailed && typeof props().archiveFailed === "object") return this.failureView();
     if (key() !== this.context) this.refresh(cx);
     const rows = visible(this);
     const done = rows.reduce((n, c) => n + c.done, 0), total = rows.reduce((n, c) => n + c.total, 0);

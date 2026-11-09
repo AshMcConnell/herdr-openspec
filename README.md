@@ -76,7 +76,10 @@ does not change that repository; it stays on the last terminal you focused.
 - **Archive** (the box button): first click turns it into a red
   **Archive?** chip; second click runs `openspec archive <name> --yes`. It
   cancels if you click anything else or wait a few seconds. While it runs the
-  row shows a spinner, and a toast reports the result. Works on incomplete
+  row shows a spinner, and a toast reports the result. A failure also opens
+  an **Archive failed** dialog naming the reason, with **Archive using AI**
+  (a new agent tab whose first message is `/opsx-archive <name>`) and
+  **Dismiss**; the toast's action opens the same offer. Works on incomplete
   changes too — OpenSpec warns and continues under `--yes`.
 - **Footer**: the folder being read (with the machine's name when it isn't
   this one).
@@ -185,6 +188,9 @@ own `view` and `open` commands — no new programs, no files and no network.
 - **Archive skips OpenSpec's prompts** (`--yes`), because the mod can't
   answer them: archiving a change with unfinished tasks proceeds with
   OpenSpec's own warning instead of asking.
+- **"Archive using AI" needs an installed agent** — with none installed, or
+  while the agent list is still loading or cannot be read, the dialog copies
+  `/opsx-archive <name>` to the clipboard instead and says so.
 - **Remote spaces poll** every 15 seconds rather than watching files (Herdr's
   folder watch is local-only).
 - **Long task rows wrap** — continuation lines of a wrapped task in
