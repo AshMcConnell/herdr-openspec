@@ -24,20 +24,25 @@ Every row SHALL carry an archive button (a box icon, a touch brighter on complet
 
 ### Requirement: Archive command
 
-The confirmed archive SHALL run `openspec archive <name> --yes` in the resolved directory, on the folder's machine — `--yes` because the panel has no TTY to answer OpenSpec's prompts. An incomplete change SHALL proceed with OpenSpec's own warning instead of being blocked.
+The confirmed archive SHALL run `openspec archive <name> --yes` in the confirmed row's worktree, on that worktree's machine — `--yes` because the panel has no TTY to answer OpenSpec's prompts. An incomplete change SHALL proceed with OpenSpec's own warning instead of being blocked.
 
 #### Scenario: Archive an incomplete change
 
 - **WHEN** the user confirms the archive on a change with unfinished tasks
 - **THEN** the command runs with `--yes` and OpenSpec proceeds, warning rather than prompting
 
+#### Scenario: Archive a linked worktree's change
+
+- **WHEN** the user confirms the archive on a row under `col-27`
+- **THEN** `openspec archive <name> --yes` runs with `col-27` as its working directory, and the own worktree is untouched
+
 ### Requirement: Archive in-flight behaviour
 
-While an archive runs, its row SHALL show a spinner and every other row's archive button SHALL be hidden; further archive clicks SHALL be ignored until it settles. When it finishes, the archived change's fold-out SHALL collapse if it was open and the list SHALL refresh, both when the panel still shows that repository. No archive SHALL start when no repository root is known. A settled archive — success or failure — SHALL leave no spinner and no hidden archive buttons while the panel is still live.
+While an archive runs, its row SHALL show a spinner and every other row's archive button SHALL be hidden, in every worktree section; further archive clicks SHALL be ignored until it settles. When it finishes, the archived change's fold-out SHALL collapse if it was open and the list SHALL refresh, both when the panel still shows that repository. No archive SHALL start when no repository root is known. A settled archive — success or failure — SHALL leave no spinner and no hidden archive buttons while the panel is still live.
 
 #### Scenario: Single archive at a time
 
-- **WHEN** an archive is running and the user clicks another row's archive button
+- **WHEN** an archive is running and the user clicks another row's archive button, in the same or another worktree
 - **THEN** the other rows' buttons are hidden and the click cannot start a second archive
 
 #### Scenario: After the archive
@@ -76,7 +81,7 @@ The panel SHALL report the archive's outcome by toast: "Change archived" with th
 
 ### Requirement: Archive failure recovery
 
-When an archive fails, the panel SHALL present an "Archive failed" dialog naming the change and the error and asking "Archive <name> using AI?", with buttons **Archive using AI** and **Dismiss**. The dialog SHALL be modal, so a click beside it does not close it, and Esc and the buttons SHALL close it. **Archive using AI** SHALL open a new agent tab in the same space and repository whose first message is `/opsx-archive <name>`; when no agent is installed, or the agent list cannot be read, or the agent list is still loading, it SHALL copy `/opsx-archive <name>` to the clipboard instead and say so. The same offer SHALL be reachable from the failure toast's action for a short time after the failure. Only one such dialog SHALL be open at a time. Once the offer is dispatched or dismissed, the same failure SHALL NOT open the dialog again.
+When an archive fails, the panel SHALL present an "Archive failed" dialog naming the change and the error and asking "Archive <name> using AI?", with buttons **Archive using AI** and **Dismiss**. The dialog SHALL be modal, so a click beside it does not close it, and Esc and the buttons SHALL close it. **Archive using AI** SHALL open a new agent tab in the same space and the failed change's worktree whose first message is `/opsx-archive <name>`; when no agent is installed, or the agent list cannot be read, or the agent list is still loading, it SHALL copy `/opsx-archive <name>` to the clipboard instead and say so. The same offer SHALL be reachable from the failure toast's action for a short time after the failure. Only one such dialog SHALL be open at a time. Once the offer is dispatched or dismissed, the same failure SHALL NOT open the dialog again.
 
 #### Scenario: Failure opens the offer
 
@@ -86,7 +91,7 @@ When an archive fails, the panel SHALL present an "Archive failed" dialog naming
 #### Scenario: Hand it to an agent
 
 - **WHEN** "Archive using AI" is pressed and an agent is available
-- **THEN** a new agent tab opens in the same space and repository whose first message is `/opsx-archive <name>`, and the dialog closes
+- **THEN** a new agent tab opens in the same space and the failed change's worktree whose first message is `/opsx-archive <name>`, and the dialog closes
 
 #### Scenario: No agent available
 
@@ -115,44 +120,17 @@ When an archive fails, the panel SHALL present an "Archive failed" dialog naming
 
 ### Requirement: Bulk archive in the selected LLM
 
-The panel SHALL provide a **Bulk archive** action whenever it has a resolved repository and at least one active change. Pressing the action SHALL hand OpenSpec's bulk-archive command to Herdr's currently selected agent — the agent the agent list and agent block show — by sending `/opsx-bulk-archive` to that agent's terminal, on that agent's machine. The panel SHALL NOT run any `openspec archive` command for this action and SHALL NOT choose the changes to archive; the command's own workflow prompts for the selection, validates the changes, resolves conflicting delta specs, syncs the main specs, and archives.
+The panel SHALL provide a **Bulk archive** action whenever it has a resolved repository and at least one active change in its own worktree; a change that exists only in a linked worktree SHALL NOT show the action and SHALL NOT be archived by it. Pressing the action SHALL hand OpenSpec's bulk-archive command to Herdr's currently selected agent — the agent the agent list and agent block show — by sending `/opsx-bulk-archive` to that agent's terminal, on that agent's machine. The panel SHALL NOT run any `openspec archive` command for this action and SHALL NOT choose the changes to archive; the command's own workflow prompts for the selection, validates the changes, resolves conflicting delta specs, syncs the main specs, and archives.
 
-If no agent is selected, the panel SHALL open a new agent tab in the panel's repository with the first installed agent and `/opsx-bulk-archive` as its first message. If the selected agent's live folder is not the panel's repository, or cannot be read, the panel SHALL NOT send the command to that agent; it SHALL open a new tab in the panel's repository with the selected agent's program when that program can be resolved, otherwise the first installed agent, and `/opsx-bulk-archive` as its first message. If no agent is installed, the agent list cannot be read, or the tab cannot start, the panel SHALL copy `/opsx-bulk-archive` to the clipboard and say so.
+If no agent is selected, the panel SHALL open a new agent tab in the panel's own worktree with the first installed agent and `/opsx-bulk-archive` as its first message. If the selected agent's live folder is not the panel's own worktree, or cannot be read, the panel SHALL NOT send the command to that agent; it SHALL open a new tab in the panel's own worktree with the selected agent's program when that program can be resolved, otherwise the first installed agent, and `/opsx-bulk-archive` as its first message. If no agent is installed, the agent list cannot be read, or the tab cannot start, the panel SHALL copy `/opsx-bulk-archive` to the clipboard and say so.
 
-A toast SHALL confirm every hand-off — sent, opened, or copied. Only one hand-off SHALL be in flight at a time; a press while one is in flight SHALL do nothing. The single-change archive button and its two-click confirmation SHALL be unchanged.
+#### Scenario: Only linked worktrees have changes
 
-#### Scenario: The selected agent receives the command
-
-- **WHEN** the panel has a resolved repository, Herdr has a selected agent whose live folder is that repository, and the **Bulk archive** action is pressed
-- **THEN** `/opsx-bulk-archive` is sent to that agent's terminal on its machine, a toast names the agent, and the panel runs no archive command and shows no archive spinner
-
-#### Scenario: No selected agent
-
-- **WHEN** the action is pressed and no agent is selected
-- **THEN** a new agent tab opens in the panel's repository with `/opsx-bulk-archive` as its first message, and a toast says so
-
-#### Scenario: Selected agent in another repository
-
-- **WHEN** the action is pressed and the selected agent's live folder is not the panel's repository
-- **THEN** no command is sent to that agent, and a new tab opens in the panel's repository with the selected agent's program (or the first installed agent when that program cannot be resolved) and `/opsx-bulk-archive` as its first message
-
-#### Scenario: Selected agent's folder cannot be read
-
-- **WHEN** the action is pressed and the selected agent's live folder cannot be read
-- **THEN** it is treated as another repository: no command is sent, and the new-tab path in the previous scenario is taken
-
-#### Scenario: No agent available
-
-- **WHEN** no agent is installed, or the agent list cannot be read, or the new tab cannot start
-- **THEN** `/opsx-bulk-archive` is copied to the clipboard, a toast says so, and no archive runs
-
-#### Scenario: One hand-off at a time
-
-- **WHEN** a hand-off is still in flight and the action is pressed again
-- **THEN** nothing is sent or opened a second time
-
-#### Scenario: No repository or no changes
-
-- **WHEN** the panel has not resolved a repository, or the list holds no active changes
+- **WHEN** the panel's own worktree has no changes and `col-27` has two
 - **THEN** the **Bulk archive** action is not shown
+
+#### Scenario: Own worktree has changes
+
+- **WHEN** the panel's own worktree has a change
+- **THEN** the action is shown and its hand-off targets the panel's own worktree, regardless of linked sections above or below
 
