@@ -10,15 +10,21 @@ the mod's specified behaviour.
 ![OpenSpec docked in the side panel](preview-panel.png)
 
 Click a change to fold out its task list from `tasks.md`; click a task to
-tick or untick it there. With a change viewer open, clicking another change
-switches the viewer to it too. Press the box button to archive a change
-(`openspec archive`, confirmed twice, reported by toast). Right-click a
-change for a small menu — **Copy name**, and **View change**, which opens
-the whole change beside your work in a tabbed viewer: **proposal**,
-**design**, **tasks** and **specs**, one tab for each artifact it has, all
-in Tokyo Night (the Obsidian theme), drawn by the mod's own markdown
-renderer, with a click-to-tick checklist on the tasks tab. Another **View
-change** switches that open viewer instead of adding a pane. The list follows
+tick or untick it there, and **Mark all N done** ticks every open task in one
+write after a second press arms it. With a change viewer open, clicking
+another change switches the viewer to it too. Press the box button to archive
+a change (`openspec archive`, confirmed twice, reported by toast).
+Right-click a change for a menu — **Copy name**, **View change**, then a
+divider and five AI commands (**Continue**, **Apply**, **Verify**, **Sync
+specs** and **Archive using AI**) handed off to the selected agent, a new tab
+or the clipboard, with the panel's status read hiding what cannot apply.
+**View change** opens the whole change beside your work in a tabbed viewer:
+**proposal**, **design**, **tasks** and **specs**, one tab for each artifact
+it has, all in Tokyo Night (the Obsidian theme), drawn by the mod's own
+markdown renderer, with a click-to-tick checklist on the tasks tab. Another
+**View change** switches that open viewer instead of adding a pane. The
+toolbar's **Commands** button carries repo-level commands — today **New
+change**, handing off `/opsx-propose` with nothing appended. The list follows
 the repository of the terminal you're focused on — including spaces that
 live on another machine. Clicking the panel, a viewer or the floating window
 does not change that repository; it stays on the last terminal you focused.
@@ -145,8 +151,10 @@ git clone https://github.com/AshMcConnell/herdr-openspec
 cp -R herdr-openspec/mods/openspec ~/.config/herdr-app/mods/
 ```
 
-The mod loads in place — no restart. Herdr's Files and Changes panels show
-where one goes: to open OpenSpec beside a terminal right away:
+Herdr runs its own copy of the mod from `~/.config/herdr-app/mods/`, so a
+copied folder is only live once you reload the mod panel in the app — the app
+itself needs no restart. Herdr's Files and Changes panels show where one goes:
+to open OpenSpec beside a terminal right away:
 
 ```sh
 herdr-app do pane.split '{"direction":"right","mod":"openspec"}'
@@ -163,6 +171,9 @@ An installed copy doesn't update itself.
 cd herdr-openspec && git pull
 rm -rf ~/.config/herdr-app/mods/openspec && cp -R mods/openspec ~/.config/herdr-app/mods/
 ```
+
+Then reload the mod panel in the app: the app runs its own copy, so the new
+files are only live once it has re-read them. The app itself needs no restart.
 
 ### Dock it like Files and Changes
 
@@ -219,10 +230,12 @@ ignored — `openspec list` reports dot folders as changes, and the viewer's
 `find` can return a `spec.md` inside a dot directory, so the panel hides both
 (they are hidden, not deleted).
 
-The list and viewer copies find each other through Herdr's shared values
-(`openspec.viewers`, `openspec.views`, `openspec.view.ack`,
-`openspec.view.quiet` and `openspec.opens`) and the mod's
-own `view` and `open` commands — no new programs, no files and no network.
+The list, viewer and menu copies find each other, and the failure dialog
+finds its toast, through Herdr's shared values (`openspec.viewers`,
+`openspec.views`, `openspec.view.ack`, `openspec.view.quiet`,
+`openspec.opens`, `openspec.handoff`, `openspec.archive-failed` and
+`openspec.archive-dialog`) and the mod's own `view`, `open`, `command` and
+`archive-ai` commands — no new programs, no files and no network.
 
 ## Limits
 

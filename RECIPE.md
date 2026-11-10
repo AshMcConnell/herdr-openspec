@@ -15,9 +15,9 @@ The **state** sort groups the list under ✓ Complete / Nearly done / In
 progress / Unstarted / No tasks headers with counts. Clicking a row folds out
 the change's task list from its `tasks.md` (✓ done, ○ open, section
 headings; hovering shows a truncated row's full text); clicking a task ticks
-or unticks its checkbox in `tasks.md` itself (this machine only), and a
-**Mark all N done** action above the rows ticks every open box in one write
-once two presses confirm it. The box
+or unticks its checkbox in `tasks.md` itself (on this machine or the pane's
+remote one), and a **Mark all N done** action above the rows ticks every open
+box in one write once two presses confirm it. The box
 button on a row archives that change: first click turns it into a red
 "Archive?" chip, the second runs `openspec archive <name> --yes` and reports
 by toast. The toolbar's **Bulk archive** button hands `/opsx-bulk-archive` to
@@ -97,6 +97,9 @@ It shows itself four ways:
 - `find <change>/specs -name spec.md` when a viewer lists a change's delta
   specs (local and remote alike; the mod has no granted read root for
   `readdir`).
+- `herdr-core file edit` on a remote space, when a task click or **Mark all
+  done** writes `tasks.md` there: one exact-text old/new pair per changed
+  line, all-or-none, with every changed line checked against a re-read.
 
 The row menu's copy uses the app's clipboard directly — not a command.
 
@@ -110,19 +113,23 @@ work (`pane.split` with `{file, change, on}` props) and reads the change's
 artifacts with `readTextFile` (on the pane's machine for remote spaces): a
 folder watch on the change's own folder keeps a local pane current —
 `specs/` included — and remote panes poll every 15 seconds (as does a watch
-that cannot arm). List and viewer copies address each other through Herdr's
-shared values (`openspec.viewers`, `openspec.views`, `openspec.view.ack`,
-`openspec.view.quiet` and `openspec.opens`) and the mod's own `view` /
-`open` commands, so an open viewer is switched in place rather than
+that cannot arm). List, viewer and menu copies address each other through
+Herdr's shared values (`openspec.viewers`, `openspec.views`,
+`openspec.view.ack`, `openspec.view.quiet`, `openspec.opens`,
+`openspec.handoff`, `openspec.archive-failed` and
+`openspec.archive-dialog`) and the mod's own `view` / `open` / `command` /
+`archive-ai` commands, so an open viewer is switched in place rather than
 duplicated. Those are the same kind of command every mod key binding uses;
 no programs are started.
 
 Nothing else: no shell, no network. `readTextFile` reads the expanded
-change's `tasks.md`, and a task click writes it back with `writeTextFile`:
-a compare-and-swap on the copy just read (a concurrent edit rejects the
-write instead of being overwritten), local machine only (the writer takes
-no `on`), and only ever to `openspec/changes/<name>/tasks.md` with `<name>`
-from the list. **Mark all done** is one write of the same kinds: one
+change's `tasks.md`, and a task click writes it back: on this machine
+`writeTextFile` compares-and-swaps the copy just read (a concurrent edit
+rejects the write instead of being overwritten); on a remote machine one
+`herdr-core file edit` replaces that checkbox line's exact text (refused if
+the line is not unique) and checks it against a re-read. Either way the write
+is only ever to `openspec/changes/<name>/tasks.md` with `<name>` from the
+list. **Mark all done** is one write of the same kinds: one
 compare-and-swap of the whole file on this machine, or one `herdr-core file
 edit` on a remote machine carrying a pair per open line (all-or-none, each
 old line pre-checked unique, every changed line verified against a re-read).
@@ -155,8 +162,9 @@ git clone https://github.com/AshMcConnell/herdr-openspec
 cp -R herdr-openspec/mods/openspec ~/.config/herdr-app/mods/
 ```
 
-It hot-loads; no restart. Requires the `openspec` CLI on the user's `PATH`
-(on every machine whose spaces will show it).
+The app runs its own copy of this folder, so reload the mod panel in the app
+after copying; Herdr itself needs no restart. Requires the `openspec` CLI on
+the user's `PATH` (on every machine whose spaces will show it).
 
 Check it:
 
