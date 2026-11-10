@@ -30,8 +30,12 @@ does not change that repository; it stays on the last terminal you focused.
 - **Header**: the change count and the total tasks done, a refresh button, and
   a close button when it floats.
 - **Toolbar**: a filter box (matches change names, case-insensitive, `Esc` or
-  the × clears it) and a sort button that cycles **recent → A–Z → % done →
-  state**. The choice is remembered. Header totals follow the filtered set.
+  the × clears it), a **Commands** button (shown whenever a repository is
+  resolved, whatever the change count) whose menu holds repo-level commands —
+  today **New change**, which hands off `/opsx-propose` with nothing appended,
+  so the command asks what to build — and a sort button that cycles **recent
+  → A–Z → % done → state**. The choice is remembered. Header totals follow the
+  filtered set.
 - **State, at a glance**: every row carries a chip — bright green `✓ complete`
   (the theme's ANSI green; not its `done` status colour, which can be blue),
   blue `N left` when at most 2 tasks remain, `unstarted` (has tasks, none
@@ -57,12 +61,28 @@ does not change that repository; it stays on the last terminal you focused.
   every task done turns green: its name, the selected tab and a **✓
   complete** chip. It works for remote spaces too. Built to take more items
   later.
+  After **Copy name** and **View change**, a divider separates five command
+  items: **Continue** (`/opsx-continue <name>`), **Apply** (`/opsx-apply
+  <name>`), **Verify** (`/opsx-verify <name>`), **Sync specs**
+  (`/opsx-sync <name>`) and **Archive using AI** (`/opsx-archive <name>`).
+  Each hands the command off exactly as **Bulk archive** does: to the selected
+  agent when it works in this repository, else a new agent tab here, else the
+  clipboard. Before the menu opens the panel reads the change's status and
+  hides what cannot apply — **Continue** when the change is complete;
+  **Apply** and **Verify** until the tasks artifact is done (**Apply** also
+  until the row shows open tasks); **Sync specs** until the specs artifact is
+  done. **Archive using AI** is always shown. If the status read fails or is
+  slow, all five appear, and the menu opens where you right-clicked.
 - **Expanded**: the change's task list — ✓ for done, ○ for open, under its
   `tasks.md` section headings. Click a task to toggle its box in `tasks.md`:
   the row flips at once and the counts follow when the new file is read back
   (this machine or the pane's remote one — a remote flip goes through
   herdr-core's exact-text edit on the machine and is checked against a
-  re-read). Opening a
+  re-read). Above the rows, **Mark all N done** ticks every open box in one
+  write — N counts the whole `tasks.md`, rows past the 120-row cap included —
+  in two presses: the first arms the label as **Mark all N?** for about six
+  seconds, the second writes, and the arm lapses on timeout or when the
+  panel's open change or task state changes. Opening a
   change's row also switches an open viewer to that change; clicking the open
   row again only folds the tasks away. Task rows show the entry's whole text —
   continuation lines of a wrapped `tasks.md` entry included — wrapped over as
@@ -81,6 +101,17 @@ does not change that repository; it stays on the last terminal you focused.
   (a new agent tab whose first message is `/opsx-archive <name>`) and
   **Dismiss**; the toast's action opens the same offer. Works on incomplete
   changes too — OpenSpec warns and continues under `--yes`.
+- **Bulk archive** (the toolbar button, shown while a repository is resolved
+  and at least one active change is listed): hands `/opsx-bulk-archive` to
+  the agent you have selected — the one the agent list and agent block show —
+  by typing the command into that agent's terminal, on its machine. The
+  command's own workflow prompts for the changes to archive, validates each
+  one, resolves delta specs that touch the same capability, syncs the main
+  specs and archives; the panel itself runs no archive command and does not
+  choose the changes. If the selected agent works in another repository or
+  cannot be reached, a new tab opens here with its program (or the first
+  installed agent); with no agent installed, or a tab that cannot start, the
+  command goes to the clipboard instead.
 - **Footer**: the folder being read (with the machine's name when it isn't
   this one).
 
@@ -167,7 +198,12 @@ change's `tasks.md` only if it still matches what the panel read (a lost race
 rejects the write rather than overwriting anyone). On a remote machine it is
 `herdr-core file edit` on the pane's machine: one checkbox line's exact text
 is replaced (refused if that line is not unique in the file), and the line is
-checked against a re-read before the panel accepts it. Either way
+checked against a re-read before the panel accepts it. **Mark all done** is
+the same write once for the whole file: on this machine one compare-and-swap
+of every open line at once, and on a remote machine one `herdr-core file
+edit` carrying one old/new pair per open line, all-or-none — each old line
+checked to appear exactly once before anything is written, and every changed
+line verified against a re-read. Either way
 the write is only ever at `openspec/changes/<name>/tasks.md` with `<name>`
 from the list. It never runs a shell: every call is an argument list, and
 change names come from `openspec list`, never typed input. Nothing goes
@@ -177,6 +213,11 @@ The **View change** viewer runs `find` to list a change's specs (local and
 remote alike) and otherwise adds no programs: it reads `proposal.md`,
 `design.md` and `tasks.md` with Herdr's file reader (on the change's machine
 for remote spaces) and opens itself with `pane.split`.
+
+Change entries and capability directories whose name begins with a dot are
+ignored — `openspec list` reports dot folders as changes, and the viewer's
+`find` can return a `spec.md` inside a dot directory, so the panel hides both
+(they are hidden, not deleted).
 
 The list and viewer copies find each other through Herdr's shared values
 (`openspec.viewers`, `openspec.views`, `openspec.view.ack`,
@@ -188,15 +229,37 @@ own `view` and `open` commands — no new programs, no files and no network.
 - **Archive skips OpenSpec's prompts** (`--yes`), because the mod can't
   answer them: archiving a change with unfinished tasks proceeds with
   OpenSpec's own warning instead of asking.
+- **Dot entries are hidden, not deleted** — a change folder or capability
+  directory whose name begins with `.` is left out of the list and the specs
+  tab; it stays on disk, and it comes back if you rename it.
 - **"Archive using AI" needs an installed agent** — with none installed, or
   while the agent list is still loading or cannot be read, the dialog copies
   `/opsx-archive <name>` to the clipboard instead and says so.
+- **Bulk archive is a hand-off, not an archive** — the panel never runs
+  `openspec archive` for it, does not wait for the agent, and does not report
+  the result; the list's folder watch and 15-second poll bring the archive
+  back. Only one hand-off is in flight at a time; a press while one is in
+  flight does nothing. The command is sent to the selected agent only when
+  its live folder is the panel's repository: an agent in another repository,
+  or one whose folder cannot be read, instead gets a new tab in this
+  repository with the selected agent's program — or the first installed
+  agent when that program cannot be resolved. With no agent selected, the
+  first installed agent starts in a new tab. When no agent is installed, the
+  agent list cannot be read, or the tab cannot start, the command is copied
+  to the clipboard instead.
+- **Every command is a hand-off, not a run** — the row menu's five commands
+  and the Commands menu's **New change** use the same paths and the same
+  one-at-a-time rule as Bulk archive; a pick while one is in flight does
+  nothing, and the panel never waits for the command or reports its result.
+  Sending to an agent that is sitting mid-approval-prompt can land the text
+  oddly, and the installed-agent check is cached for up to a minute, so a
+  just-installed agent may be missing (the clipboard fallback covers it).
 - **Remote spaces poll** every 15 seconds rather than watching files (Herdr's
   folder watch is local-only).
 - **Long task rows wrap** — continuation lines of a wrapped task in
   `tasks.md` are folded into their entry — while a too-long section heading
   truncates to the row and shows in full in its hover card; lists past 120
-  rows point at the file. Only the tasks shown can be ticked from the panel.
+  rows point at the file.
 - **The filter matches change names** — not task text or specs.
 - **"Nearly done" means at most 2 tasks remain** — a fixed threshold, not a
   percentage; state chips and the state grouping use it.

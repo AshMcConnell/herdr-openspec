@@ -16,7 +16,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, HoverCard, InputState, Input, Tabs, Tab } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings, shared, setShared, knownAgents, nextCommand } from "herdr";
+import { agents, spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings, shared, setShared, knownAgents, nextCommand } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
 // focused pane's (or focused layout terminal block's) live folder, else the
@@ -31,6 +31,13 @@ import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder,
 // resolves afresh.
 let lastTerminal = null; // { cwd, on, space }
 
+// The agent the person had selected, remembered the same way: clicking the
+// panel moves keyboard focus to a mod pane, where focused().agent reads
+// empty, so the Bulk archive press would otherwise lose the choice. Written
+// only from a real terminal focus (see location()), keyed by active space
+// like lastTerminal so a real space switch resolves afresh.
+let lastAgent = null; // { address, cwd, on, space }
+
 function location() {
   const pinned = typeof props()?.folder === "string" ? props().folder : null;
   const space = spaces().find((s) => s.active), f = focused();
@@ -38,6 +45,11 @@ function location() {
   const pane = f?.pane ? all.find((p) => p.pane === f.pane && p.cwd) : null;
   const cwd = pane?.cwd || f?.cwd || null;
   const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
+  // Remember the selected agent only while a real terminal holds the focus: a
+  // mod-pane focus has no terminal, and its f.cwd is this panel's folder, not
+  // the agent's — it must not overwrite either field.
+  const term = f?.terminal;
+  if (term && agents().some((a) => a.address === term)) lastAgent = { address: term, cwd: f.cwd ?? null, on, space: space?.id ?? null };
   // Focus is the mod's own surface (no folder): keep following the terminal
   // the list was reading, as long as we are still in the same space.
   if (!pinned && !cwd && lastTerminal && lastTerminal.space === space?.id) {
@@ -51,6 +63,42 @@ function location() {
   return next;
 }
 const key = () => JSON.stringify(location());
+
+// The agent the person has selected: Herdr's focused().agent — the agent an
+// agent block shows — else the last agent a real terminal focus showed this
+// panel (lastAgent, above), because the click that reaches the button moves
+// the keyboard onto the panel first. Null when neither names an agent.
+// focused().agent can name an agent missing from agents() (a layout terminal
+// block): keep its address, and use the remembered folder only when it is the
+// same agent. Its live folder is read from its pane; a remote address's
+// machine prefix (`machine/t7`) splits off, so no slash means this computer.
+function selectedAgent() {
+  const address = focused()?.agent || lastAgent?.address || null;
+  if (!address) return null;
+  const slash = address.indexOf("/");
+  const found = agents().find((a) => a.address === address);
+  const cwd = (found ? panes().find((p) => p.pane === found.pane)?.cwd ?? null : null)
+    ?? (lastAgent?.address === address ? lastAgent.cwd ?? null : null);
+  return {
+    address,
+    local: slash > -1 ? address.slice(slash + 1) : address,
+    machine: slash > -1 ? address.slice(0, slash) : null,
+    cwd,
+    programKey: found?.program?.key ?? null,
+    name: found?.program?.name ?? "the selected agent",
+  };
+}
+
+// Whether the selected agent works in the panel's repository: the bulk
+// command archives the agent's working folder, so sending it to an agent in
+// another repository would sync and move the wrong changes. One trailing
+// slash is normalized; a folder we cannot read counts as a mismatch.
+function sameRepo(selected, root, on) {
+  const folder = typeof selected?.cwd === "string" ? selected.cwd.replace(/\/$/, "") : "";
+  const base = typeof root === "string" ? root.replace(/\/$/, "") : "";
+  if (!folder || !base) return false;
+  return (folder === base || folder.startsWith(`${base}/`)) && (selected.machine ?? null) === (on ?? null);
+}
 
 // ---- Viewer switching -----------------------------------------------------
 //
@@ -66,6 +114,7 @@ const VIEWS = "openspec.views";     // { [id]: { [seq]: { id, seq, file, change,
 const ACK = "openspec.view.ack";    // { [seq]: id }
 const QUIET = "openspec.view.quiet";// { [id]: ms } a viewer that did not answer
 const OPENS = "openspec.opens";     // { [panel]: { panel, name, root, on, seq, at } }
+const HANDOFF = "openspec.handoff"; // { [panel]: { panel, command, kind, sent, opened, failed, root, on, space, seq, at } }
 const FAILED = "openspec.archive-failed"; // { [panel]: { panel, name, detail, root, on, space, seq, at } }
 const DIALOG = "openspec.archive-dialog"; // the newest failure dialog's overlay id
 const VIEW_ACK_MS = 700;
@@ -193,6 +242,33 @@ function openRequests() {
     .slice(-VIEWER_CAP));
 }
 
+// Hand-off requests older than a minute are dead: the popup that wrote them is
+// long gone. Swept on every read, like openRequests, so a crash cannot leave
+// the map growing forever.
+function openHandoffs() {
+  const now = Date.now();
+  return Object.fromEntries(Object.entries(mapOf(HANDOFF))
+    .filter(([, r]) => r && typeof r.at === "number" && now - r.at < OPEN_AGE_MS)
+    .sort((a, b) => a[1].at - b[1].at)
+    .slice(-VIEWER_CAP));
+}
+
+// A popup cannot run a hand-off: its cx ends when it closes. It records the
+// request — command, toast titles, repository, machine, space and a fresh
+// sequence — in Herdr's shared values and wakes the panel copy that opened it
+// by name. `at` carries the panel's root/on/space/panel captured at open time,
+// so the hand-off survives the panel switching folders.
+function queueHandoff(at, { command, kind, sent, opened, failed }) {
+  const panel = at?.panel ?? null;
+  if (!panel) return; // a popup is only ever opened by a panel copy; nothing to wake
+  setShared(HANDOFF, { ...openHandoffs(), [panel]: {
+    panel, command, kind, sent, opened, failed,
+    root: at.root ?? null, on: at.on ?? null, space: at.space ?? null,
+    seq: uid(), at: Date.now(),
+  } });
+  run("openspec.command");
+}
+
 // Failure offers older than a minute are dead: the toast that could replay them
 // has gone. Swept on every write, like openRequests.
 function failedOffers() {
@@ -280,6 +356,20 @@ function toggled(text, line, task, to) {
   return lines.join("\n");
 }
 
+// tasks.md with every open checkbox ticked at once: a space mark becomes
+// `x`, while an `[x]`/`[X]` and every other line stay byte-for-byte — the
+// `[\s\S]` tail keeps a CRLF line's trailing `\r`. Never null: there is no
+// per-line identity to check here, so the whole-file compare-and-swap (or the
+// remote edit's pre-checked pairs) is what proves the file still holds these
+// lines.
+function markedAll(text) {
+  const mark = /^(\s*[-*]\s+\[)( |x|X)(\][\s\S]*)$/;
+  return text.split("\n").map((line) => {
+    const box = mark.exec(line);
+    return box && box[2] === " " ? `${box[1]}x${box[3]}` : line;
+  }).join("\n");
+}
+
 // How many times `needle` appears in `text`, counted literally — split/join,
 // never a regex, because task text can hold regex characters.
 function occurs(text, needle) {
@@ -303,6 +393,28 @@ function flipPair(body, line, next) {
   if (old === neu) return { old, neu };
   if (occurs(body, old) !== 1) throw "the task's line is not unique in tasks.md";
   return { old, neu };
+}
+
+// The pairs one remote mark-all edit carries: every line `next` ticked, as
+// its exact bytes in `body` and its ticked bytes — one line each, trailing
+// `\r` kept, so no pair needs neighbouring context. `markedAll` builds `next`,
+// so a pair that differs beyond the mark cannot happen; the assert throws
+// rather than shipping it. Each old line must appear exactly once in the file
+// (`--old` is ambiguous otherwise) — checked here, before anything is written,
+// so the CLI's all-or-none is the backstop, not the first line of defence.
+function flipPairs(body, next) {
+  const mark = /^(\s*[-*]\s+\[)( |x|X)(\][\s\S]*)$/;
+  const before = body.split("\n"), after = next.split("\n");
+  if (before.length !== after.length) throw "the tasks changed under the click";
+  const pairs = [];
+  for (let i = 0; i < before.length; i++) {
+    if (before[i] === after[i]) continue;
+    const b = mark.exec(before[i]), a = mark.exec(after[i]);
+    if (!b || !a || b[1] !== a[1] || b[3] !== a[3] || b[2] !== " " || a[2].toLowerCase() !== "x") throw "the tasks changed under the click";
+    if (occurs(body, before[i]) !== 1) throw "the task's line is not unique in tasks.md";
+    pairs.push({ old: before[i], neu: after[i], line: i });
+  }
+  return pairs;
 }
 
 // A failed command's detail for a toast. The last non-empty stderr line wins
@@ -340,6 +452,18 @@ const showArchive = (c, self) => !self.busy || self.busy === c.name;
 // machine the panel had resolved when the menu opened (null when it found
 // none), and the panel copy that can act on the request after this popup's
 // own cx has gone.
+// One command item: the label, the command it hands off (nothing else is
+// appended but the change's name), and a visibility predicate over the
+// status read (`{ complete, tasks, specs }` booleans; absent when the read
+// failed). Its `run` only queues the request — the popup cannot run it.
+const commandMenu = (label, command, when) => ({
+  label, command, when,
+  run: (name, _cx, at) => queueHandoff(at, {
+    command: `${command} ${name}`, kind: "command",
+    sent: "Command sent", opened: "Command opened", failed: "Could not hand off the command",
+  }),
+});
+
 const MENU = [
   { label: "Copy name", run: (name, cx) => {
     cx.write_to_clipboard(name);
@@ -358,7 +482,38 @@ const MENU = [
     setShared(OPENS, { ...openRequests(), [at.panel]: { panel: at.panel, name, root: at.root, on: at.on ?? null, seq: uid(), at: Date.now() } });
     run("openspec.open");
   } },
+  { divider: true },
+  commandMenu("Continue", "/opsx-continue", (s) => !s.complete),
+  commandMenu("Apply", "/opsx-apply", (s, entry) => s.tasks && Boolean(entry) && entry.total > 0 && entry.done < entry.total),
+  commandMenu("Verify", "/opsx-verify", (s) => s.tasks),
+  commandMenu("Sync specs", "/opsx-sync", (s) => s.specs),
+  commandMenu("Archive using AI", "/opsx-archive", null),
 ];
+
+// The visible items for one row's popup, as plain data (`{ i, label }` into
+// MENU, or `{ div: true }`), plus the popup height. A failed status read
+// (`status` null) shows the full static set. The divider is only placed when
+// the command group has something in it: Archive using AI is always shown, so
+// it always does. The height matches the p(5) padding plus 31 px a row and 9
+// px for the divider.
+function rowMenuItems(status, entry) {
+  const shown = (it) => !it.when || status === null || it.when(status, entry);
+  const items = [];
+  let height = 10;
+  const commands = MENU.some((it) => it.command && shown(it));
+  MENU.forEach((it, i) => {
+    if (it.divider) {
+      if (!commands) return;
+      items.push({ div: true });
+      height += 9;
+      return;
+    }
+    if (!shown(it)) return;
+    items.push({ i, label: it.label });
+    height += 31;
+  });
+  return { items, height };
+}
 
 // Sort modes the header button cycles through. "recent" keeps openspec list's
 // own order (last modified first); "done" floats the closest-to-finished up;
@@ -369,6 +524,28 @@ const SORTS = [
   { id: "name", label: "A–Z" },
   { id: "done", label: "% done" },
   { id: "state", label: "state" },
+];
+
+// The bulk-archive command handed to the selected agent (or a new tab, or the
+// clipboard): one constant for all three paths, so they cannot drift. Nothing
+// is appended to it — the command prompts for the changes itself.
+const BULK = "/opsx-bulk-archive";
+
+// The repo-level commands the toolbar's Commands menu offers: commands that
+// need no change name. This table is the extension point — append here and the
+// popup renders the new item in order. Each run queues the bare command (no
+// name appended) through the same shared hand-off as the row menu; it takes
+// the command from the entry itself, so editing the table is enough.
+const repoCommand = (label, command) => ({
+  label, command,
+  run: (_name, _cx, at) => queueHandoff(at, {
+    command, kind: "command",
+    sent: "Command sent", opened: "Command opened", failed: "Could not hand off the command",
+  }),
+});
+
+const COMMANDS = [
+  repoCommand("New change", "/opsx-propose"),
 ];
 
 const STATES = [
@@ -684,6 +861,8 @@ export default class OpenSpec extends View {
     this.at = 0; // the right-click menu's keyboard spot
     // The right-click menu popup: no list, no polls, no folder watch.
     if (typeof props()?.menuFor === "string") { this.handle.focus(); return; }
+    // The toolbar Commands popup: same renderer, repo-level items, no name.
+    if (props()?.commandsFor) { this.handle.focus(); return; }
     // The change viewer pane (pane.split {mod, props:{file,...}}): reads the
     // change's artifacts from its props — no list, no location(), nothing that
     // follows focus, so a pane saved with its tab works on its own after a
@@ -745,9 +924,19 @@ export default class OpenSpec extends View {
     this.root = null; this.on = null; this.watched = null;
     this.error = null; this.loading = false;
     this.busy = null; this.confirming = null; this.confirmUntil = 0;
+    // The fold-out's "Mark all N?" arm, kept apart from the archive chip's
+    // confirmation so arming one never withdraws the other. It is spent at
+    // every point the task state, the open change or the file changes:
+    // refresh's context-change reset, pick(), refresh's change-leaves-list
+    // sweep, toggle()'s settlement, loadTasks (only when the freshly read text
+    // differs), and markAll's own start.
+    this.marking = null; this.markUntil = 0;
+    this.handoffBusy = false; // one hand-off at a time across every command source; cleared only in handoff's finally, never on a folder switch
+    this.handoffKind = null;  // "bulk" spins the toolbar button; a row command does not
     this.panelId = uid(); // names this copy in the row menu's open request
     this.viewToken = 0;   // invalidates an earlier request's acknowledgement wait
     this.handledOpen = null;
+    this.handledHandoff = null; // the last hand-off request this copy ran
     this.closed = false;
     this.sort = localStorage.getItem("sort") ?? "recent";
     if (!SORTS.some((s) => s.id === this.sort)) this.sort = "recent";
@@ -766,6 +955,7 @@ export default class OpenSpec extends View {
         try {
           if (command === "open") this.acceptOpen(cx);
           else if (command === "archive-ai") this.acceptArchiveFailed();
+          else if (command === "command") this.acceptHandoff(cx);
         }
         catch { /* one bad wake must not end menu handling for this copy */ }
       }
@@ -793,6 +983,7 @@ export default class OpenSpec extends View {
       this.context = context; this.root = null; this.on = null; this.watched = null;
       this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.error = null;
       this.confirming = null; this.confirmUntil = 0;
+      this.marking = null; this.markUntil = 0;
     }
     if (!cwd) { this.root = null; return; }
     this.loading = true;
@@ -814,12 +1005,16 @@ export default class OpenSpec extends View {
         let parsed;
         try { parsed = JSON.parse(list.stdout); } catch { this.stale("Unexpected output from openspec list"); return; }
         if (key() !== context) return;
-        this.changes = (parsed.changes ?? []).map((c) => ({
+        // Dot-prefixed folders are scratch/backup, not changes. The CLI lists
+        // them as change entries (verified), so drop them here, before storing,
+        // and every count, sort, group and filter follows the filtered list.
+        this.changes = (parsed.changes ?? []).filter((c) => !(c.name ?? "").startsWith(".")).map((c) => ({
           name: c.name, done: c.completedTasks ?? 0, total: c.totalTasks ?? 0,
           at: c.lastModified ? Date.parse(c.lastModified) : null, status: c.status ?? "",
         }));
         this.error = null;
         if (this.confirming && !this.changes.some((c) => c.name === this.confirming)) this.confirming = null;
+        if (this.marking && !this.changes.some((c) => c.name === this.marking)) this.marking = null;
         // The repo root anchors the folder watch and tasks.md reads.
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
         this.root = top.code === 0 ? top.stdout.trim() : cwd;
@@ -844,6 +1039,17 @@ export default class OpenSpec extends View {
     if (!req || req.panel !== this.panelId || req.seq === this.handledOpen) return;
     this.handledOpen = req.seq;
     this.requestViewer(req.name, cx, { root: req.root ?? null, on: req.on ?? null, openIfNone: true });
+  }
+
+  // A row or Commands popup asked this panel copy to hand off a command,
+  // because the popup's cx ends when the menu closes. Only the named copy
+  // acts, and only once per request.
+  acceptHandoff(cx) {
+    if (this.closed) return;
+    const req = openHandoffs()[this.panelId];
+    if (!req || req.panel !== this.panelId || req.seq === this.handledHandoff) return;
+    this.handledHandoff = req.seq;
+    this.handoff(cx, req);
   }
 
   // The failure toast's action: this copy opens the offer it recorded. A press
@@ -906,6 +1112,9 @@ export default class OpenSpec extends View {
     if (!root) return;
     const text = await readTextFile(`${root}/openspec/changes/${name}/tasks.md`, { on });
     if (key() !== context || this.open !== name) return;
+    // A re-read that brings a different file withdraws the mark-all arm; an
+    // unchanged re-read (an unrelated change's edit waking the watch) does not.
+    if (this.marking && text !== this.tasksText) this.marking = null;
     this.tasks = text === null ? null : taskRows(text);
     this.tasksText = text;
   }
@@ -1056,8 +1265,9 @@ export default class OpenSpec extends View {
       const rel = path.startsWith(specsDir) ? path.slice(specsDir.length).replace(/^\/+/, "") : path;
       const parts = rel.split("/");
       // Only specs/<capability>/spec.md is a capability delta; a stray
-      // specs/spec.md or a deeper file is not one.
-      if (parts.length !== 2 || !parts[0] || parts[1] !== "spec.md") continue;
+      // specs/spec.md or a deeper file is not one. A dot-named capability
+      // (e.g. specs/.backup/spec.md) is scratch, not a delta, so skip it too.
+      if (parts.length !== 2 || !parts[0] || parts[1] !== "spec.md" || parts[0].startsWith(".")) continue;
       const cap = parts[0];
       if (!seen.has(cap)) { seen.add(cap); caps.push({ cap, path }); }
     }
@@ -1208,6 +1418,7 @@ export default class OpenSpec extends View {
     this.tasks = [];
     this.tasksText = null;
     this.confirming = null;
+    this.marking = null; // a row switch spends the mark-all arm
     // Opening a row also shows it in the open viewer (same repository and
     // machine); folding a row away leaves the viewer where it is.
     if (opening && this.root) this.requestViewer(name, cx, { root: this.root, on: this.on, openIfNone: false });
@@ -1288,6 +1499,30 @@ export default class OpenSpec extends View {
     return reread;
   }
 
+  // The write a mark-all makes: every open checkbox ticked in one shot.
+  // Locally it is the same whole-file compare-and-swap a single tick uses
+  // (writeFlip's local branch, against the snapshot loadTasks read); on a
+  // remote machine it is ONE `herdr-core file edit` carrying a `--old`/`--new`
+  // pair for every ticked line — the CLI's `--help` says "(--old X --new Y,
+  // repeatable) … all or none", so one command carries the whole change and
+  // either every pair applies or the file is untouched. Each old line is
+  // pre-checked unique (flipPairs), and the re-read must hold every changed
+  // line's ticked text. Returns the settled text to show; throws when it
+  // cannot land or verify.
+  async writeFlips(path, body, next) {
+    if (!this.on) { await writeTextFile(path, next, body); return next; }
+    const pairs = flipPairs(body, next);
+    if (!pairs.length) return body;
+    const r = await exec("herdr-core", ["file", "edit", path,
+      ...pairs.flatMap((p) => [`--old=${p.old}`, `--new=${p.neu}`])], { cwd: this.root, on: this.on });
+    if (r.code !== 0) throw exitDetail(r);
+    const reread = await readTextFile(path, { on: this.on });
+    if (reread === null) throw "tasks.md is gone";
+    const now = reread.split("\n"), want = next.split("\n");
+    if (now.length !== want.length || pairs.some((p) => now[p.line] !== want[p.line])) throw "the write did not land as asked";
+    return reread;
+  }
+
   // A task click: flip that checkbox line in the change's tasks.md — the
   // file is the truth, and the watch brings the new counts back. Optimistic
   // (the row flips at once), one at a time, in every space: locally the
@@ -1322,7 +1557,45 @@ export default class OpenSpec extends View {
         this.tasksText = settled; this.tasks = taskRows(settled);
       }
       this.toggling = null;
+      this.marking = null; // a tick changed the task state, so N changed with it
       if (why) notify({ title: "Task not updated", body: why, level: "error" });
+      if (key() === context) this.refresh(cx);
+      cx.notify();
+    });
+  }
+
+  // Mark every open task in the change's tasks.md done, in one write. The same
+  // scaffolding as a single toggle (toggle): optimistic — every open row
+  // flips at once, the rows past the 120-row display cap included — one at a
+  // time, one attempt plus one re-read and retry, and the file's truth on
+  // screen after any failure. Locally the write is a whole-file
+  // compare-and-swap on the snapshot loadTasks read; on a remote machine it is
+  // one all-or-none `herdr-core file edit` (writeFlips). The label's arm
+  // (`marking`/`markUntil`) is spent here, so it never survives its own write.
+  markAll(name, cx) {
+    if (!this.root || this.toggling || this.open !== name || typeof this.tasksText !== "string") return;
+    this.marking = null;
+    if (Array.isArray(this.tasks)) for (const r of this.tasks) if (!r.section && !r.done) r.done = true;
+    this.toggling = name;
+    const path = `${this.root}/openspec/changes/${name}/tasks.md`;
+    const context = key();
+    cx.notify();
+    cx.spawn(async (cx) => {
+      let body = this.tasksText, settled = null, why = "";
+      try {
+        try { settled = await this.writeFlips(path, body, markedAll(body)); }
+        catch { settled = null; } // stale snapshot: fall through to a re-read
+        if (settled === null) {
+          body = await readTextFile(path, { on: this.on });
+          if (body === null) why = "tasks.md is gone";
+          else settled = await this.writeFlips(path, body, markedAll(body));
+        }
+      } catch (e) { why = String(e); if (settled === null) settled = body; }
+      if (key() === context && this.open === name && settled !== null) {
+        this.tasksText = settled; this.tasks = taskRows(settled);
+      }
+      this.toggling = null;
+      if (why) notify({ title: "Tasks not updated", body: why, level: "error" });
       if (key() === context) this.refresh(cx);
       cx.notify();
     });
@@ -1386,9 +1659,9 @@ export default class OpenSpec extends View {
     return v_flex().flex_none()
       .child(h_flex().id(`chg-${c.name}`).h(38).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
         .when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(c.name, cx))
-        .on_mouse_down("right", (_e, cx) => {
+        .on_mouse_down("right", (e, cx) => {
           cx.stop_propagation();
-          openOverlay({ mod: "openspec", kind: "popup", width: 200, height: 240, props: { menuFor: c.name, root: this.root, on: this.on, panel: this.panelId } });
+          this.openRowMenu(c, e.position, cx);
         })
         .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(complete ? green(t) : t.foreground).child(c.name))
         .when(c.total > 0, (e) => e.child(div().text_size(11).text_color(complete ? green(t) : t.muted).child(`${c.done}/${c.total}`)))
@@ -1413,7 +1686,28 @@ export default class OpenSpec extends View {
         .when(this.tasks === null, (el) => el.child(div().px(8).py(3).text_size(11).text_color(t.dim).child("No tasks.md")))
         .when(Array.isArray(this.tasks), (el) => {
           const rows = this.tasks.slice(0, 120);
-          return el.children(rows.map((r) => this.taskLine(r, t, c.name, complete)))
+          // The mark-all bar: right-aligned above the rows, counting every
+          // open checkbox in the file (past the cap too). A first press arms
+          // the label for ~6 s, a second inside that window writes; while any
+          // task write is in flight it is a spinner and presses are ignored.
+          // The optimistic flip empties openCount before the write settles,
+          // so the bar also stays up while this change's write is in flight —
+          // otherwise the spinner would never be rendered.
+          const openCount = this.tasks.filter((r) => !r.section && !r.done).length;
+          const armed = this.marking === c.name && Date.now() < this.markUntil;
+          const inFlight = this.toggling === c.name;
+          return el
+            .when(openCount > 0 || this.toggling === c.name, (el2) => el2.child(h_flex().w_full().h(18).flex_none().px(8).items_center().justify_end()
+              .when(inFlight, (bar) => bar.child(div().id(`mark-${c.name}`).flex().items_center()
+                .child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.dim).spin(900))))
+              .when(!inFlight && armed, (bar) => bar.child(div().id(`mark-${c.name}`).h(18).px(6).flex().flex_none().items_center().rounded(4)
+                .bg(`${t.ansi1}22`).text_color(t.ansi1).text_size(10).cursor_pointer()
+                .on_click((_e, cx) => this.markAll(c.name, cx)).child(`Mark all ${openCount}?`)))
+              .when(!inFlight && !armed, (bar) => bar.child(div().id(`mark-${c.name}`).h(18).px(6).flex().flex_none().items_center().rounded(4)
+                .text_color(t.dim).text_size(10).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+                .on_click((_e, cx) => { this.marking = c.name; this.markUntil = Date.now() + 6000; cx.notify(); })
+                .child(`Mark all ${openCount} done`)))))
+            .children(rows.map((r) => this.taskLine(r, t, c.name, complete)))
             .when(this.tasks.length > 120, (el2) => el2.child(div().px(8).py(2).text_size(10).text_color(t.dim)
               .child(`+ ${this.tasks.length - 120} more in tasks.md`)))
             .when(!this.tasks.length, (el2) => el2.child(div().px(8).py(3).text_size(11).text_color(t.dim).child("No tasks yet")));
@@ -1486,31 +1780,157 @@ export default class OpenSpec extends View {
     closeOverlay(props().overlay);
   }
 
-  // The right-click popup on a row: MENU's items over the list. Esc and a
-  // click beside it close it (the host does both); ↑/↓/Enter pick.
+  // The shared hand-off every command source uses: hand the command text to
+  // the person's selected agent by typing it into that agent's terminal
+  // (herdr-core send, on its machine), then a new tab in the captured
+  // repository with the selected agent's program (or the first installed),
+  // then the clipboard. One hand-off at a time across every source; the
+  // toasts report the hand-off, never a finished command. The caller supplies
+  // the toast titles so Bulk archive keeps its exact wording. Runs against the
+  // repository, machine and space captured when the action was picked, not the
+  // live ones, because the panel may switch folders while a menu is open.
+  handoff(cx, { command, kind, sent, opened, failed, root, on, space }) {
+    if (this.handoffBusy || !root) return;
+    this.handoffBusy = true;
+    this.handoffKind = kind;
+    const context = key();
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const clipboard = () => {
+        cx.write_to_clipboard(command);
+        notify({ title: "Copied — paste it into your agent", level: "info" });
+      };
+      try {
+        const selected = selectedAgent();
+        if (selected && sameRepo(selected, root, on)) {
+          try {
+            const r = await exec("herdr-core", ["send", selected.local, command], { on: selected.machine });
+            if (r.code !== 0) throw exitDetail(r);
+            notify({ title: sent, body: selected.name, level: "success" });
+            return;
+          } catch { /* the terminal is gone or the machine unreachable: new tab */ }
+        }
+        try {
+          let list = [];
+          try { list = await knownAgents({ on }); } catch { /* unreadable list: no agent to start */ }
+          const agent = list.find((a) => a.installed && selected?.programKey && a.key === selected.programKey) ?? list.find((a) => a.installed);
+          if (agent) {
+            run("tab.new", { space, folder: root, argv: agent.run, task: command });
+            notify({ title: opened, body: agent.name, level: "success" });
+          } else clipboard();
+        } catch { clipboard(); }
+      } catch {
+        // The tab and the clipboard both failed — the command must not be lost.
+        try { notify({ title: failed, body: `Run by hand: ${command}`, level: "error" }); }
+        catch { /* even the toast is unreachable; nothing can report */ }
+      } finally {
+        this.handoffBusy = false;
+        this.handoffKind = null;
+        try { if (key() === context) cx.notify(); } catch { /* a released view cannot repaint */ }
+      }
+    });
+  }
+
+  // Bulk archive: hand /opsx-bulk-archive to the person's selected agent by
+  // typing it into that agent's terminal (herdr-core send, on its machine).
+  // The panel chooses no changes and runs no archive command — the command's
+  // own workflow prompts for the selection, validates, resolves conflicts,
+  // syncs the specs and archives; the folder watch and the 15-second poll
+  // bring the result back. Fallbacks in order: a new tab in this repository
+  // with the selected agent's program (or the first installed), then the
+  // clipboard. One hand-off at a time; the toasts report the hand-off, never
+  // a finished archive.
+  bulkArchive(cx) {
+    if (this.handoffBusy || !this.root) return;
+    const root = this.root, on = this.on;
+    const space = spaces().find((s) => s.active)?.id ?? null;
+    this.handoff(cx, {
+      command: BULK, kind: "bulk",
+      sent: "Bulk archive sent", opened: "Bulk archive opened", failed: "Could not hand off the bulk archive",
+      root, on, space,
+    });
+  }
+
+  // The row's right-click: read the change's status (bounded), then open the
+  // popup where the click happened with only the items that can apply. A
+  // failed or slow read shows the full static set, and the popup opens after
+  // the read so items neither appear nor vanish under the pointer.
+  openRowMenu(c, pos, cx) {
+    const root = this.root, on = this.on;
+    const space = spaces().find((s) => s.active)?.id ?? null;
+    const geo = pos && typeof pos.x === "number" && typeof pos.y === "number" ? { at: { x: pos.x, y: pos.y } } : {};
+    const open = (items, height) => openOverlay({ mod: "openspec", kind: "popup", ...geo, width: 200, height,
+      props: { menuFor: c.name, root, on, space, panel: this.panelId, items } });
+    if (!this.root) {
+      const { items, height } = rowMenuItems(null, c);
+      open(items, height);
+      return;
+    }
+    cx.spawn(async (cx) => {
+      let status = null;
+      try {
+        const slow = new Promise((resolve) => cx.timer.after(1500, () => resolve(null)));
+        const r = await Promise.race([exec("openspec", ["status", "--change", c.name, "--json"], { cwd: root, on }), slow]);
+        if (r && r.code === 0) {
+          const parsed = JSON.parse(r.stdout);
+          const artifacts = Array.isArray(parsed?.artifacts) ? parsed.artifacts : [];
+          const done = (id) => artifacts.some((a) => a?.id === id && a?.status === "done");
+          status = { complete: parsed?.isComplete === true, tasks: done("tasks"), specs: done("specs") };
+        }
+      } catch { status = null; }
+      const { items, height } = rowMenuItems(status, c);
+      open(items, height);
+    });
+  }
+
+  // The toolbar Commands menu: a repo-level table with no status read, so it
+  // opens at once at the overlay's default pointer anchor.
+  openCommands(cx) {
+    const items = COMMANDS.map((c, i) => ({ i, label: c.label }));
+    const height = 10 + 31 * items.length;
+    openOverlay({ mod: "openspec", kind: "popup", width: 200, height,
+      props: { commandsFor: true, root: this.root, on: this.on,
+        space: spaces().find((s) => s.active)?.id ?? null, panel: this.panelId, items } });
+  }
+
+  // The row/Commands popup: the visible items over the list. Esc and a click
+  // beside it close it (the host does both); ↑/↓ wrap over the non-divider
+  // items and Enter picks. The panel decides what is visible; this never
+  // evaluates a predicate.
   menuView(t) {
-    const name = props().menuFor;
-    const choose = (i, cx) => {
-      const it = MENU[i];
-      if (!it) return;
-      it.run(name, cx, { root: props().root ?? null, on: props().on ?? null, panel: props().panel ?? null }); // while the popup (and its cx) is still alive
+    const rowMenu = typeof props().menuFor === "string";
+    const name = rowMenu ? props().menuFor : null;
+    const table = rowMenu ? MENU : COMMANDS;
+    const fallback = table.map((it, i) => it.divider ? { div: true } : { i, label: it.label });
+    const items = Array.isArray(props().items) && props().items.length ? props().items : fallback;
+    const pickable = items.map((it, n) => it.div ? -1 : n).filter((n) => n >= 0);
+    if (!pickable.length) return v_flex().id("openspec-menu");
+    if (this.at < 0 || this.at >= pickable.length) this.at = 0;
+    const highlight = pickable[this.at];
+    const choose = (n, cx) => {
+      const entry = items[pickable[n]], it = entry && table[entry.i];
+      if (!it || typeof it.run !== "function") { closeOverlay(props().overlay); return; }
+      const at = { root: props().root ?? null, on: props().on ?? null, space: props().space ?? null, panel: props().panel ?? null };
+      it.run(name, cx, at); // while the popup (and its cx) is still alive
       closeOverlay(props().overlay);
     };
     return v_flex().id("openspec-menu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(12.8)
       .on_key_down((e, cx) => {
-        if (e.key === "down") this.at = (this.at + 1) % MENU.length;
-        else if (e.key === "up") this.at = (this.at + MENU.length - 1) % MENU.length;
+        if (e.key === "down") this.at = (this.at + 1) % pickable.length;
+        else if (e.key === "up") this.at = (this.at + pickable.length - 1) % pickable.length;
         else if (e.key === "enter") choose(this.at, cx);
         else if (e.key === "escape") closeOverlay(props().overlay);
         else return;
         cx.notify();
       })
-      .children(MENU.map((it, i) => h_flex().id(`os-mi-${i}`).h(31).px(8).rounded(7).items_center()
-        .text_color(t.foreground)
-        .when(i === this.at, (el) => el.bg(t.selected))
-        .hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => choose(i, cx))
-        .child(div().flex_1().child(it.label))));
+      .children(items.map((it, n) => it.div
+        ? div().h(9).mx(6).border_t(1).border_color(t.border)
+        : h_flex().id(`os-mi-${it.i}`).h(31).px(8).rounded(7).items_center()
+          .text_color(t.foreground)
+          .when(n === highlight, (el) => el.bg(t.selected))
+          .hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => choose(pickable.indexOf(n), cx))
+          .child(div().flex_1().child(it.label))));
   }
 
   clearFilter(cx) {
@@ -1644,7 +2064,7 @@ export default class OpenSpec extends View {
 
   render(cx) {
     const t = theme();
-    if (typeof props()?.menuFor === "string") return this.menuView(t);
+    if (typeof props()?.menuFor === "string" || props()?.commandsFor) return this.menuView(t);
     if (typeof props()?.file === "string") return this.changeView();
     if (props()?.archiveFailed && typeof props().archiveFailed === "object") return this.failureView();
     if (key() !== this.context) this.refresh(cx);
@@ -1680,6 +2100,21 @@ export default class OpenSpec extends View {
           .text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => this.clearFilter(cx)).child("×")))
+        .when(this.root, (e) => e.child(h_flex().id("openspec-commands").h(24).px(8).flex_none().flex().items_center().rounded(7).border_1().border_color(t.border)
+          .text_size(11).text_color(t.muted).cursor_pointer()
+          .hover((s) => s.text_color(t.foreground))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => this.openCommands(cx))
+          .child(div().min_w(0).truncate().child("Commands ▾"))))
+        .when(this.root && this.changes.length > 0, (e) => e.child(h_flex().id("openspec-bulk-archive").h(24).px(8).gap(5).flex_none().flex().items_center().rounded(7).border_1().border_color(t.border)
+          .text_size(11).text_color(t.muted).cursor_pointer()
+          .hover((s) => s.text_color(t.foreground))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => this.bulkArchive(cx))
+          .child(this.handoffBusy && this.handoffKind === "bulk"
+            ? svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.dim).spin(900)
+            : svg("mods/openspec/archive.svg").size(12).flex_none())
+          .child(div().min_w(0).truncate().child("Bulk archive"))))
         .child(div().id("openspec-sort").h(24).px(8).flex_none().flex().items_center().rounded(7).border_1().border_color(t.border)
           .text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())

@@ -15,10 +15,18 @@ The **state** sort groups the list under ✓ Complete / Nearly done / In
 progress / Unstarted / No tasks headers with counts. Clicking a row folds out
 the change's task list from its `tasks.md` (✓ done, ○ open, section
 headings; hovering shows a truncated row's full text); clicking a task ticks
-or unticks its checkbox in `tasks.md` itself (this machine only). The box
+or unticks its checkbox in `tasks.md` itself (this machine only), and a
+**Mark all N done** action above the rows ticks every open box in one write
+once two presses confirm it. The box
 button on a row archives that change: first click turns it into a red
 "Archive?" chip, the second runs `openspec archive <name> --yes` and reports
-by toast.
+by toast. The toolbar's **Bulk archive** button hands `/opsx-bulk-archive` to
+the selected agent instead — the command's own workflow prompts for the
+changes, validates each one, resolves conflicting delta specs, syncs the
+specs and archives; the panel itself runs no archive command for it. A
+**Commands** button beside it (shown whenever a repository is resolved)
+opens a small repo-level menu, today one item: **New change**, which hands
+off `/opsx-propose` with nothing appended.
 Right-click a row for a small menu of its own: **Copy name** puts the
 change's name on the clipboard (`write_to_clipboard`; a toast confirms), and
 **View change** opens the whole change as a tabbed viewer beside the work —
@@ -27,7 +35,15 @@ with the tasks tab's checklist ticking checkboxes in `tasks.md` (this
 machine only). A further **View change** switches the newest open viewer for
 the same repository and machine instead of adding a pane, and opens a new
 pane only when no viewer answers; clicking another row switches that viewer
-too and never opens one.
+too and never opens one. Under a divider the same menu carries five command
+items: **Continue** (`/opsx-continue <name>`), **Apply** (`/opsx-apply
+<name>`), **Verify** (`/opsx-verify <name>`), **Sync specs** (`/opsx-sync
+<name>`) and **Archive using AI** (`/opsx-archive <name>`). Each is the same
+kind of hand-off as **Bulk archive**. The panel reads the change's status
+before opening and hides what cannot apply: Continue when the change is
+complete; Apply and Verify until the tasks artifact is done (Apply also
+until the row shows open tasks); Sync specs until the specs artifact is done.
+Archive using AI is always shown; a failed status read shows all five.
 It reads
 the repository of the last focused terminal — clicking the panel, an open
 viewer or the floating window leaves that folder alone — else any pane with a
@@ -84,6 +100,11 @@ It shows itself four ways:
 
 The row menu's copy uses the app's clipboard directly — not a command.
 
+Change entries and capability directories whose name begins with a dot are
+ignored — `openspec list` reports dot folders as changes, and the `find` over
+a change's specs can return a `spec.md` inside a dot directory, so the mod
+hides both (they are hidden, not deleted).
+
 The row menu's **View change** opens the same mod as a pane beside the
 work (`pane.split` with `{file, change, on}` props) and reads the change's
 artifacts with `readTextFile` (on the pane's machine for remote spaces): a
@@ -101,8 +122,29 @@ change's `tasks.md`, and a task click writes it back with `writeTextFile`:
 a compare-and-swap on the copy just read (a concurrent edit rejects the
 write instead of being overwritten), local machine only (the writer takes
 no `on`), and only ever to `openspec/changes/<name>/tasks.md` with `<name>`
-from the list. Change names come from `openspec list`, never from typed
+from the list. **Mark all done** is one write of the same kinds: one
+compare-and-swap of the whole file on this machine, or one `herdr-core file
+edit` on a remote machine carrying a pair per open line (all-or-none, each
+old line pre-checked unique, every changed line verified against a re-read).
+Change names come from `openspec list`, never from typed
 input, and none of the calls can start with `-`.
+
+## Watch out
+
+**Bulk archive** is a hand-off, not an archive: the button sends
+`/opsx-bulk-archive` (typed with `herdr-core send`, on the agent's machine),
+starts it in a new tab, or copies it to the clipboard — it never runs
+`openspec archive` itself, never waits for the agent, and never reports the
+result; the folder watch (or the 15-second poll) shows it. One hand-off runs
+at a time. The send only happens when the selected agent's live folder is the
+panel's repository (read from its pane, remembered from the last real
+terminal focus); an agent in another repository, an unreadable folder, or no
+selected agent instead starts a new tab in this repository with that agent's
+program, else the first installed agent (`knownAgents`). No agent installed,
+an unreadable agent list, or a tab that cannot start copies the command to
+the clipboard instead. The row menu's five commands and the Commands menu's
+**New change** take the same order of paths and the same one-at-a-time rule,
+so a pick while any hand-off is in flight does nothing.
 
 ## Install
 

@@ -34,7 +34,7 @@
 
 - [x] 6.1 Force a failure again on the same repro: `chmod 555 openspec/changes` on a test repo (restore with `chmod 755` afterwards), click Archive, and confirm the toast reads "Archive failed" with a real reason (or `exit N`), the dialog appears, and the spinner clears with the buttons back. Compare it with the old behaviour recorded in 1.0.
 - [ ] 6.2 Press **Archive using AI**: a new agent tab opens in the same space and repository with `/opsx-archive <name>` as its first message; the dialog closes; a second rapid press spawns nothing extra.
-- [ ] 6.3 On a machine with no agent installed, confirm the command lands on the clipboard with the "Copied" toast. Confirm Dismiss and Esc close the dialog with no side effect, that the toast action cannot reopen an offer already dismissed or dispatched, and that two failures in a row leave the dialog showing the second.
-- [ ] 6.4 With the failure toast still up, run its action and confirm the same dialog opens. Confirm the success path still shows "Change archived".
-- [ ] 6.5 On a remote space, confirm the same dialog appears, then check that `tab.new` with `folder` and `task` actually starts the agent **on the remote machine** in the repository; if it does not, confirm the copy fallback is the remote behaviour (see design Risks).
-- [ ] 6.6 With two panel copies on one repository, confirm exactly one dialog appears per failure.
+- [x] 6.3 On a machine with no agent installed, confirm the command lands on the clipboard with the "Copied" toast. Confirm Dismiss and Esc close the dialog with no side effect, that the toast action cannot reopen an offer already dismissed or dispatched, and that two failures in a row leave the dialog showing the second.
+- [x] 6.4 With the failure toast still up, run its action and confirm the same dialog opens. Confirm the success path still shows "Change archived".
+- [x] 6.5 On a remote space, confirm the same dialog appears, then check that `tab.new` with `folder` and `task` actually starts the agent **on the remote machine** in the repository; if it does not, confirm the copy fallback is the remote behaviour (see design Risks).
+- [x] 6.6 With two panel copies on one repository, confirm exactly one dialog appears per failure.
