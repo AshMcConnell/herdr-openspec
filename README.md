@@ -2,7 +2,9 @@
 
 A live list of your [OpenSpec](https://github.com/Fission-AI/OpenSpec) changes
 for the [Herdr](https://herdr.dev) desktop app — what `openspec list` prints,
-but always current, in a panel beside your work. Written as a native Herdr
+but always current, in a panel beside your work. It shows every git worktree
+of that repository — the panel's own first, then linked checkouts by branch —
+each with its own change rows and task progress. Written as a native Herdr
 mod: no web view, no server, just small JavaScript the app runs itself.
 This repository is itself managed with OpenSpec — see `openspec/specs/` for
 the mod's specified behaviour.
@@ -50,6 +52,17 @@ does not change that repository; it stays on the last terminal you focused.
   ✓ Complete / Nearly done / In progress / Unstarted / No tasks headers,
   each with its count. A complete change reads green all the way down —
   name, count, bar, chip and its task list once expanded.
+- **Worktree sections**: when the repository has linked git worktrees, the
+  list splits into a section per worktree, each under a 22px header reading
+  `⎇ <branch>` (or `detached: <folder>`) and its visible change count plus
+  done/total tasks. The panel's own worktree comes first and is marked
+  `· this worktree`; linked worktrees follow, ordered by branch, with a
+  divider between sections. A single-worktree repository has no headers.
+  A change that exists in several worktrees — a completed copy merged into a
+  stacked branch, or a stale copy in the main worktree — shows once, in the
+  most complete copy's section (the freshest copy on a tie), and the other
+  copies are hidden. Every row acts in its own worktree — expanding its tasks,
+  ticking a box, archiving it, its row menu and its viewer.
 - **One row per active change**: name, progress bar, `done/total` tasks,
   and when the change was last touched. Rows sort most recent first,
   as `openspec list` does.
@@ -92,12 +105,7 @@ does not change that repository; it stays on the last terminal you focused.
   change's row also switches an open viewer to that change; clicking the open
   row again only folds the tasks away. Task rows show the entry's whole text —
   continuation lines of a wrapped `tasks.md` entry included — wrapped over as
-  many lines as it takes; resting the pointer on one shows a styled multi-line
-  card with the same full text, named
-  with the task's state (✓ done or ○ open) and, on a task card, a
-  "✓ Mark done" / "↺ Reopen" button that ticks the task straight from the
-  card — in any space; section cards show no button. A too-long section
-  heading truncates to the panel and gets the same card, labelled `section`.
+  many lines as it takes; a too-long section heading truncates to the panel.
   Click the change again to fold it away.
 - **Archive** (the box button): first click turns it into a red
   **Archive?** chip; second click runs `openspec archive <name> --yes`. It
@@ -123,17 +131,21 @@ does not change that repository; it stays on the last terminal you focused.
 
 ## Live
 
-The panel watches `openspec/changes/`, so a task an agent ticks or a change
-it creates appears right away — ticking a task from the panel proves it:
-the same watch carries its own write back into the counts. A 15-second poll
-covers remote machines (the folder watch is local-only), and switching
-spaces or panes re-reads at once.
+The panel watches `openspec/changes/` in every worktree it shows, so a task
+an agent ticks in its own checkout — or a change it creates — appears right
+away; ticking a task from the panel proves it: the same watch carries its own
+write back into the counts. Each refresh discovers the worktrees again, so one
+created, removed or pruned while the panel is open appears or disappears
+without a restart, taking its open change with it. A 15-second poll covers
+remote machines (the folder watch is local-only) and keeps every section
+current, and switching spaces or panes re-reads at once.
 An open change viewer watches the change's own folder the same way, so edits
 to any artifact — `specs/<capability>/spec.md` included — show up as they
 happen; remote viewers poll every 15 seconds. Switching a viewer to another
 change moves its watch to that change's folder.
-It runs `openspec list --json` in the focused repository — on its machine for
-remote spaces, the same way Herdr's own panels run `git`.
+It runs `openspec list --json` in the focused repository and in each linked
+worktree — on its machine for remote spaces, the same way Herdr's own panels
+run `git`.
 
 ## Install
 
@@ -199,14 +211,19 @@ you quit.
 ## What it runs
 
 The mod runs `openspec` in the repository it follows: `openspec list --json`
-(every 15 seconds, when something under `openspec/changes/` changes, and when
-you switch pane or space), and `openspec archive <name> --yes` when you press
-the archive button's chip. One `git rev-parse --show-toplevel` per switch
-finds the repository root for reading and writing `tasks.md` — read with
-Herdr's file reader, on the pane's machine for remote spaces. Ticking a task
-is a file write, not a command. On this machine `writeTextFile` replaces that
-change's `tasks.md` only if it still matches what the panel read (a lost race
-rejects the write rather than overwriting anyone). On a remote machine it is
+in the panel's own worktree and once per linked worktree (every 15 seconds,
+when something under a shown `openspec/changes/` changes, and when you switch
+pane or space), `openspec status --change <name> --json` before a row's menu
+opens, and `openspec archive <name> --yes` when you press the archive button's
+chip — in the row's own worktree, so a linked checkout is archived there and
+the panel's own tree is untouched. One `git rev-parse --show-toplevel` per
+refresh finds the repository root, and one `git worktree list --porcelain` per
+refresh finds the linked worktrees; git is only read, and the panel never
+creates, removes, prunes or locks a worktree. `tasks.md` is read with Herdr's
+file reader, on the pane's machine for remote spaces. Ticking a task is a file
+write, not a command. On this machine `writeTextFile` replaces that change's
+`tasks.md` only if it still matches what the panel read (a lost race rejects
+the write rather than overwriting anyone). On a remote machine it is
 `herdr-core file edit` on the pane's machine: one checkbox line's exact text
 is replaced (refused if that line is not unique in the file), and the line is
 checked against a re-read before the panel accepts it. **Mark all done** is
@@ -215,10 +232,10 @@ of every open line at once, and on a remote machine one `herdr-core file
 edit` carrying one old/new pair per open line, all-or-none — each old line
 checked to appear exactly once before anything is written, and every changed
 line verified against a re-read. Either way
-the write is only ever at `openspec/changes/<name>/tasks.md` with `<name>`
-from the list. It never runs a shell: every call is an argument list, and
-change names come from `openspec list`, never typed input. Nothing goes
-beyond the machines Herdr already connects.
+the write is only ever at `<worktree>/openspec/changes/<name>/tasks.md` with
+`<name>` from that worktree's list. It never runs a shell: every call is an
+argument list, and change names come from `openspec list`, never typed input.
+Nothing goes beyond the machines Herdr already connects.
 
 The **View change** viewer runs `find` to list a change's specs (local and
 remote alike) and otherwise adds no programs: it reads `proposal.md`,
@@ -245,6 +262,22 @@ finds its toast, through Herdr's shared values (`openspec.viewers`,
 - **Dot entries are hidden, not deleted** — a change folder or capability
   directory whose name begins with `.` is left out of the list and the specs
   tab; it stays on disk, and it comes back if you rename it.
+- **Only worktrees with OpenSpec show** — a linked worktree with no
+  `openspec/changes/` gets no section; one whose listing fails another way
+  shows its own header and the first line of the error, without stopping the
+  others.
+- **A change name shows once** — when several worktrees hold the same change,
+  the most complete copy is the row (the freshest copy when progress ties),
+  in that copy's section; the other copies are not listed or counted. An edit
+  made in a hidden copy appears only when it becomes the shown copy, or on the
+  next poll.
+- **Bulk archive stays with the panel's own worktree** — the button appears
+  only when that worktree has a change, and it never archives a linked
+  worktree's change. Each row's archive acts on its own worktree, and there
+  is no single action that archives the same name everywhere.
+- **Every shown worktree costs a watch and a poll** — one folder watch and one
+  `openspec list --json` per linked worktree with changes, every 15 seconds;
+  with many worktrees the refresh gets heavier.
 - **"Archive using AI" needs an installed agent** — with none installed, or
   while the agent list is still loading or cannot be read, the dialog copies
   `/opsx-archive <name>` to the clipboard instead and says so.
@@ -271,8 +304,7 @@ finds its toast, through Herdr's shared values (`openspec.viewers`,
   folder watch is local-only).
 - **Long task rows wrap** — continuation lines of a wrapped task in
   `tasks.md` are folded into their entry — while a too-long section heading
-  truncates to the row and shows in full in its hover card; lists past 120
-  rows point at the file.
+  truncates to the row; lists past 120 rows point at the file.
 - **The filter matches change names** — not task text or specs.
 - **"Nearly done" means at most 2 tasks remain** — a fixed threshold, not a
   percentage; state chips and the state grouping use it.

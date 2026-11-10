@@ -2,7 +2,13 @@
 
 A live list of the focused terminal's OpenSpec changes for the Herdr desktop
 app: one row per active change (name, progress bar, done/total tasks, and
-its age), newest first, with header totals. A toolbar under the header has a
+its age), newest first, with header totals. Linked git worktrees of the
+repository are listed too — the panel's own worktree first, then each linked
+checkout under a `⎇ <branch>` header with its own change count and task
+progress, and every row acts in the worktree it came from. A change name that
+several worktrees hold shows once — the most complete copy, then the freshest
+— so a merged or stale duplicate does not repeat the row. A toolbar under
+the header has a
 filter box (change-name substring; `Esc` or × clears it) and a sort button
 cycling recent → A–Z → % done → state (remembered in the panel's
 `localStorage` under `"sort"`); the header totals follow the filtered set.
@@ -14,7 +20,7 @@ theme's ANSI bright green, not its `done` status colour (which can be blue).
 The **state** sort groups the list under ✓ Complete / Nearly done / In
 progress / Unstarted / No tasks headers with counts. Clicking a row folds out
 the change's task list from its `tasks.md` (✓ done, ○ open, section
-headings; hovering shows a truncated row's full text); clicking a task ticks
+headings); clicking a task ticks
 or unticks its checkbox in `tasks.md` itself (on this machine or the pane's
 remote one), and a **Mark all N done** action above the rows ticks every open
 box in one write once two presses confirm it. The box
@@ -85,15 +91,22 @@ It shows itself four ways:
 
 ## What it runs
 
-- `openspec list --json` in the repository — on refresh (first show, a pane
-  or space switch), every 15 seconds, and when Herdr's watch on
-  `openspec/changes/` fires (local spaces only; remote spaces get the poll).
-- `openspec archive <name> --yes` when the archive chip is confirmed. `--yes`
-  is required: the mod has no TTY to answer OpenSpec's prompts, so an
-  incomplete change proceeds with OpenSpec's warning instead of asking.
-- `git rev-parse --show-toplevel` once per switch, to anchor the watch and
-  the `tasks.md` reads and writes at the repository root (the folder itself
-  when git fails).
+- `openspec list --json` in the repository and once per linked worktree — on
+  refresh (first show, a pane or space switch), every 15 seconds, and when
+  Herdr's watch on a worktree's `openspec/changes/` fires (local spaces only;
+  remote spaces get the poll).
+- `git worktree list --porcelain` on every refresh, to find the linked
+  worktrees. It is read-only: the mod never creates, removes, prunes or locks
+  one.
+- `openspec status --change <name> --json` before a row's menu opens, in that
+  row's worktree.
+- `openspec archive <name> --yes` when the archive chip is confirmed, with the
+  row's worktree as its working directory. `--yes` is required: the mod has no
+  TTY to answer OpenSpec's prompts, so an incomplete change proceeds with
+  OpenSpec's warning instead of asking.
+- `git rev-parse --show-toplevel` on every refresh, to anchor the discovery,
+  the watches and the `tasks.md` reads and writes at the repository root (the
+  folder itself when git fails).
 - `find <change>/specs -name spec.md` when a viewer lists a change's delta
   specs (local and remote alike; the mod has no granted read root for
   `readdir`).
@@ -127,14 +140,15 @@ change's `tasks.md`, and a task click writes it back: on this machine
 `writeTextFile` compares-and-swaps the copy just read (a concurrent edit
 rejects the write instead of being overwritten); on a remote machine one
 `herdr-core file edit` replaces that checkbox line's exact text (refused if
-the line is not unique) and checks it against a re-read. Either way the write
-is only ever to `openspec/changes/<name>/tasks.md` with `<name>` from the
-list. **Mark all done** is one write of the same kinds: one
+the line is not unique) and checks it against a re-read. **Mark all done** is
+one write of the same kinds: one
 compare-and-swap of the whole file on this machine, or one `herdr-core file
 edit` on a remote machine carrying a pair per open line (all-or-none, each
 old line pre-checked unique, every changed line verified against a re-read).
 Change names come from `openspec list`, never from typed
-input, and none of the calls can start with `-`.
+input, and none of the calls can start with `-`. Either way the write is only
+ever to `<worktree>/openspec/changes/<name>/tasks.md`, with `<name>` from that
+worktree's list.
 
 ## Watch out
 

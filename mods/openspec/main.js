@@ -15,7 +15,7 @@
 // https://github.com/AshMcConnell/herdr-openspec — MIT license.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, HoverCard, InputState, Input, Tabs, Tab } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, Tabs, Tab } from "gpui-base";
 import { agents, spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, props, openOverlay, closeOverlay, notify, run, settings, shared, setShared, knownAgents, nextCommand } from "herdr";
 
 // Where we are: a `folder` prop if the layout or pane.split gave one, else the
@@ -444,7 +444,7 @@ function thrownDetail(e) {
 
 // The archive button sits on every row (completed ones a touch brighter);
 // hidden while another archive is running.
-const showArchive = (c, self) => !self.busy || self.busy === c.name;
+const showArchive = (c, self) => !self.busy || self.busy === c.key;
 
 // The row's right-click menu: what each item does with the change's name.
 // More items append here; the popup renders them in order. Items take
@@ -611,18 +611,105 @@ function stateOf(c) {
 // and a fixed green as fallbacks.
 const green = (t) => t.ansi10 || t.ansi2 || "#3fae6a";
 
-// The visible list: the filter (name substring, case-insensitive) applied,
-// then the chosen sort. openspec's order is already recent-first; "state"
-// sorts by the order of STATES, keeping it inside each group.
-function visible(self) {
-  const q = (self.filter || "").trim().toLowerCase();
-  let rows = q ? self.changes.filter((c) => c.name.toLowerCase().includes(q)) : self.changes;
-  if (self.sort === "name") rows = [...rows].sort((a, b) => a.name.localeCompare(b.name));
-  else if (self.sort === "done") rows = [...rows].sort((a, b) =>
+// One section's rows in the chosen sort. openspec's order is already
+// recent-first; "state" sorts by the order of STATES, keeping it inside each
+// group (the section renderer draws the group headers).
+function sortedRows(rows, sort) {
+  if (sort === "name") return [...rows].sort((a, b) => a.name.localeCompare(b.name));
+  if (sort === "done") return [...rows].sort((a, b) =>
     (b.total ? b.done / b.total : -1) - (a.total ? a.done / a.total : -1) || b.total - a.total);
-  else if (self.sort === "state") rows = [...rows].sort((a, b) =>
+  if (sort === "state") return [...rows].sort((a, b) =>
     STATES.findIndex((s) => s.id === stateOf(a)) - STATES.findIndex((s) => s.id === stateOf(b)));
   return rows;
+}
+
+// Which copy of a same-named change the list keeps: the most complete copy
+// first (it carries the work), then the most tasks done, then the freshest
+// listing, then the larger task list. Progress before time because checking
+// out a worktree stamps every file with a new mtime, so a stale copy could
+// otherwise win on time alone.
+function fresher(a, b) {
+  const ratio = (c) => (c.total ? c.done / c.total : -1);
+  const at = (c) => (typeof c.at === "number" ? c.at : -Infinity);
+  if (ratio(a) !== ratio(b)) return ratio(a) > ratio(b);
+  if (a.done !== b.done) return a.done > b.done;
+  if (at(a) !== at(b)) return at(a) > at(b);
+  return a.total > b.total;
+}
+
+// Keep one row per change name across the sections (design D4): the winner
+// stays in its own worktree's section and every other copy is dropped, so a
+// merged or stale duplicate is never rendered, counted or acted on.
+function dedupeSections(sections) {
+  const winners = new Map();
+  for (const s of sections) for (const c of s.changes) {
+    const kept = winners.get(c.name);
+    if (!kept || fresher(c, kept)) winners.set(c.name, c);
+  }
+  for (const s of sections) s.changes = s.changes.filter((c) => winners.get(c.name) === c);
+  return sections;
+}
+
+// The visible list per worktree section: the filter (name substring,
+// case-insensitive) applied inside each section, sections left without a row
+// dropped, then each remaining section sorted. A section carrying an error has
+// no rows but stays — its header and message are its content. Section order
+// never changes; only the rows inside a section sort.
+function visibleSections(self) {
+  const q = (self.filter || "").trim().toLowerCase();
+  return (self.sections ?? []).map((s) => {
+    const rows = q ? s.changes.filter((c) => c.name.toLowerCase().includes(q)) : s.changes;
+    return { ...s, rows: sortedRows(rows, self.sort) };
+  }).filter((s) => s.rows.length || s.error);
+}
+
+// The flat visible rows: the header count, the task chip and the
+// "No changes match" check read every section's rows together.
+function visible(self) {
+  return visibleSections(self).flatMap((s) => s.rows);
+}
+
+// `git worktree list --porcelain` -> one entry per blank-line-separated block.
+// The rest of a `worktree ` line is the path, verbatim: porcelain does not
+// quote spaces. `prunable` (and `locked`) may carry a reason after the marker.
+// OpenCode's own worktrees (~/.local/share/opencode/worktree/<hash>/<name>)
+// are standard linked worktrees and appear here, as do sibling checkouts of
+// the same repository.
+function parseWorktrees(text) {
+  const list = [];
+  for (const block of `${text ?? ""}`.trim().split(/\r?\n\r?\n/)) {
+    const wt = { path: null, branch: null, detached: false, bare: false, prunable: false };
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith("worktree ")) wt.path = line.slice("worktree ".length);
+      else if (line.startsWith("branch ")) wt.branch = line.slice("branch ".length).replace(/^refs\/heads\//, "");
+      else if (line === "detached") wt.detached = true;
+      else if (line === "bare") wt.bare = true;
+      else if (line === "prunable" || line.startsWith("prunable ")) wt.prunable = true;
+    }
+    if (wt.path) list.push(wt);
+  }
+  return list;
+}
+
+// The section label: the branch, or the folder name for a detached HEAD.
+function worktreeLabel(wt) {
+  if (wt?.branch) return wt.branch;
+  const at = `${wt?.path ?? ""}`.replace(/\/+$/, "");
+  return `detached: ${at.split("/").filter(Boolean).pop() ?? at}`;
+}
+
+// A short stable id for a worktree root (FNV-1a, 32-bit hex). Two change rows
+// with the same name in different worktrees must get distinct render ids — a
+// duplicate id would share hover/focus state and make one row's click look
+// like another's. Internal only: `key` (root + name) names the row in state.
+function wtId(root) {
+  const text = `${root ?? ""}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
 }
 
 // ---- The markdown body renderer ------------------------------------------
@@ -855,6 +942,31 @@ function mdView(text, title, prefix = "md", titleColor = NIGHT_MD.h[0]) {
   return v_flex().flex_none().p(14).gap(6).children(out);
 }
 
+// One worktree's listing. The own and every linked worktree run the same
+// command in parallel, so this is the single place its output is parsed and
+// its failure is classified. `{ none: true }` is "No OpenSpec changes
+// directory found" — a worktree without OpenSpec, not an error. Dot-prefixed
+// folders are scratch or backup, not changes: the CLI lists them as entries
+// (verified), so drop them here, before storing.
+async function readList(root, on) {
+  let list;
+  try { list = await exec("openspec", ["list", "--json"], { cwd: root, on }); }
+  catch { return { error: "openspec is not installed" }; }
+  if (list.code !== 0) {
+    const text = (list.stderr || list.stdout || `openspec list failed (${list.code})`).trim();
+    if (/No OpenSpec changes directory/i.test(text)) return { none: true };
+    return { error: text.split("\n")[0] };
+  }
+  let parsed;
+  try { parsed = JSON.parse(list.stdout); } catch { return { error: "Unexpected output from openspec list" }; }
+  return {
+    changes: (parsed.changes ?? []).filter((c) => !(c.name ?? "").startsWith(".")).map((c) => ({
+      name: c.name, done: c.completedTasks ?? 0, total: c.totalTasks ?? 0,
+      at: c.lastModified ? Date.parse(c.lastModified) : null, status: c.status ?? "",
+    })),
+  };
+}
+
 export default class OpenSpec extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
@@ -920,7 +1032,9 @@ export default class OpenSpec extends View {
       this.handle.focus();
       return;
     }
-    this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.toggling = null;
+    this.changes = []; this.sections = []; this.ownNone = false; this.ownHasChanges = false;
+    this.tasks = []; this.tasksText = null; this.open = null; this.toggling = null;
+    this.openRoot = null; this.openName = null;
     this.root = null; this.on = null; this.watched = null;
     this.error = null; this.loading = false;
     this.busy = null; this.confirming = null; this.confirmUntil = 0;
@@ -962,18 +1076,27 @@ export default class OpenSpec extends View {
     });
   }
 
-  // Live updates between polls. watchFolder is local-only, so skip remote spaces.
-  watch(root, cx) {
-    if (this.on || this.watched === root) return;
-    this.watched = root;
-    cx.spawn(async (cx) => {
-      try {
-        while (this.watched === root) {
-          await watchFolder(`${root}/openspec/changes`);
-          if (this.watched === root) this.refresh(cx);
-        }
-      } catch { this.watched = null; }
-    });
+  // Live updates between polls: one folder watch per rendered worktree. The
+  // watched set is keyed by its sorted roots, so when a refresh adds, drops or
+  // changes a worktree's rows the old loops stop at their next wake and new
+  // ones start. watchFolder is local-only, so skip remote spaces. A worktree
+  // with no changes is not watched (the poll covers it).
+  watch(roots, cx) {
+    if (this.on) return;
+    const list = [...new Set(roots.filter(Boolean))].sort();
+    const watched = list.join("\n");
+    if (this.watched === watched) return;
+    this.watched = watched;
+    for (const root of list) {
+      cx.spawn(async (cx) => {
+        try {
+          while (this.watched === watched) {
+            await watchFolder(`${root}/openspec/changes`);
+            if (this.watched === watched) this.refresh(cx);
+          }
+        } catch { if (this.watched === watched) this.watched = null; }
+      });
+    }
   }
 
   refresh(cx) {
@@ -981,7 +1104,9 @@ export default class OpenSpec extends View {
     const { cwd, on } = location(), context = key();
     if (context !== this.context) {
       this.context = context; this.root = null; this.on = null; this.watched = null;
-      this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.error = null;
+      this.changes = []; this.sections = []; this.ownNone = false; this.ownHasChanges = false;
+      this.tasks = []; this.tasksText = null; this.open = null;
+      this.openRoot = null; this.openName = null; this.error = null;
       this.confirming = null; this.confirmUntil = 0;
       this.marking = null; this.markUntil = 0;
     }
@@ -989,46 +1114,97 @@ export default class OpenSpec extends View {
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
-        let list;
-        try {
-          list = await exec("openspec", ["list", "--json"], { cwd, on });
-        } catch {
-          if (key() === context) { this.stale("openspec is not installed"); }
-          return;
-        }
-        if (key() !== context) return;
-        if (list.code !== 0) {
-          const text = (list.stderr || list.stdout || `openspec list failed (${list.code})`).trim();
-          this.stale(/No OpenSpec changes directory/i.test(text) ? "No OpenSpec here — run `openspec init`" : text.split("\n")[0]);
-          return;
-        }
-        let parsed;
-        try { parsed = JSON.parse(list.stdout); } catch { this.stale("Unexpected output from openspec list"); return; }
-        if (key() !== context) return;
-        // Dot-prefixed folders are scratch/backup, not changes. The CLI lists
-        // them as change entries (verified), so drop them here, before storing,
-        // and every count, sort, group and filter follows the filtered list.
-        this.changes = (parsed.changes ?? []).filter((c) => !(c.name ?? "").startsWith(".")).map((c) => ({
-          name: c.name, done: c.completedTasks ?? 0, total: c.totalTasks ?? 0,
-          at: c.lastModified ? Date.parse(c.lastModified) : null, status: c.status ?? "",
-        }));
-        this.error = null;
-        if (this.confirming && !this.changes.some((c) => c.name === this.confirming)) this.confirming = null;
-        if (this.marking && !this.changes.some((c) => c.name === this.marking)) this.marking = null;
-        // The repo root anchors the folder watch and tasks.md reads.
+        // The root anchors discovery, the tasks.md reads and the watches, so
+        // it is resolved first. Discovery is read-only: the panel never
+        // creates, removes, prunes or locks a worktree.
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
-        this.root = top.code === 0 ? top.stdout.trim() : cwd;
+        const root = top.code === 0 ? top.stdout.trim() : cwd;
+        if (key() !== context) return;
+        this.root = root;
         this.on = on;
-        if (this.open && !this.changes.some((c) => c.name === this.open)) { this.open = null; this.tasks = []; this.tasksText = null; }
-        if (this.open) await this.loadTasks(this.open, context);
-        this.watch(this.root, cx);
-      } catch (e) { if (key() === context) { this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.error = String(e); } }
+        // A git failure means no repository: no linked sections, and the panel
+        // is exactly its old single-root self.
+        let worktrees = [];
+        try {
+          const wt = await exec("git", ["worktree", "list", "--porcelain"], { cwd: root, on });
+          if (wt.code === 0) worktrees = parseWorktrees(wt.stdout);
+        } catch { /* no git: one root only */ }
+        if (key() !== context) return;
+        const own = worktrees.find((w) => w.path === root) ?? null;
+        const linked = worktrees
+          .filter((w) => w.path !== root && !w.bare && !w.prunable)
+          .sort((a, b) => worktreeLabel(a).localeCompare(worktreeLabel(b)));
+        // The own listing is part of the same parallel batch as the linked
+        // ones, so one refresh costs roughly the slowest worktree.
+        const reads = await Promise.all([root, ...linked.map((w) => w.path)].map((r) => readList(r, on)));
+        if (key() !== context) return;
+        const ownRead = reads[0];
+        // Any other own failure would fail in every linked worktree too, so it
+        // is the panel's own error and linked worktrees are not used.
+        if (ownRead.error) { this.stale(ownRead.error); return; }
+        const row = (c, at, wt) => ({ ...c, root: at, wt, key: `${at}\u0000${c.name}` });
+        const ownWt = wtId(root);
+        const sections = [{
+          root, label: own ? worktreeLabel(own) : root, own: true, wt: ownWt,
+          changes: (ownRead.changes ?? []).map((c) => row(c, root, ownWt)), error: null,
+        }];
+        linked.forEach((w, i) => {
+          const read = reads[i + 1];
+          if (read.none) return; // not initialised: no section, no error
+          const wt = wtId(w.path);
+          if (read.error) {
+            sections.push({ root: w.path, label: worktreeLabel(w), own: false, wt, changes: [], error: read.error });
+            return;
+          }
+          if (!read.changes.length) return; // succeeded and empty: hidden
+          sections.push({ root: w.path, label: worktreeLabel(w), own: false, wt,
+            changes: read.changes.map((c) => row(c, w.path, wt)), error: null });
+        });
+        const ownHasChanges = sections[0].changes.length > 0;
+        // One row per name (D4): a completed change merges into a stacked
+        // branch and both keep a copy, while the main worktree keeps a stale
+        // one, so every copy would repeat the name and the stale 0/N copy
+        // would read as no progress. Keep the best copy in its own section.
+        dedupeSections(sections);
+        this.sections = sections;
+        this.changes = sections.flatMap((s) => s.changes);
+        this.ownHasChanges = ownHasChanges;
+        this.ownNone = Boolean(ownRead.none);
+        this.error = null;
+        // A row that left its worktree's list takes any key naming it with it:
+        // no stale open row, confirmation, mark-all arm, spinner or toggle.
+        const keys = new Set(this.changes.map((c) => c.key));
+        if (this.open && !keys.has(this.open)) {
+          this.open = null; this.openRoot = null; this.openName = null;
+          this.tasks = []; this.tasksText = null;
+        }
+        if (this.confirming && !keys.has(this.confirming)) this.confirming = null;
+        if (this.marking && !keys.has(this.marking)) this.marking = null;
+        if (this.busy && !keys.has(this.busy)) this.busy = null;
+        if (this.toggling && !keys.has(this.toggling)) this.toggling = null;
+        const open = this.open ? this.changes.find((c) => c.key === this.open) : null;
+        if (open) await this.loadTasks(open, context);
+        if (key() !== context) return;
+        // One watch per worktree that actually has rows; an error or empty
+        // section is left to the poll.
+        this.watch(sections.filter((s) => s.changes.length > 0).map((s) => s.root), cx);
+      } catch (e) {
+        if (key() === context) {
+          this.changes = []; this.sections = []; this.ownNone = false; this.ownHasChanges = false;
+          this.tasks = []; this.tasksText = null; this.open = null;
+          this.openRoot = null; this.openName = null; this.error = String(e);
+        }
+      }
       finally { this.loading = false; cx.notify(); }
     });
   }
 
   // Reset to an empty, explained panel (no repo, no openspec, a failed run).
-  stale(text) { this.root = null; this.changes = []; this.tasks = []; this.tasksText = null; this.open = null; this.error = text; }
+  stale(text) {
+    this.root = null; this.changes = []; this.sections = []; this.ownNone = false; this.ownHasChanges = false;
+    this.tasks = []; this.tasksText = null; this.open = null;
+    this.openRoot = null; this.openName = null; this.error = text;
+  }
 
   // The row menu's View change: the popup asked this panel (by id) to act,
   // because the popup's cx ends when the menu closes. Only the named copy
@@ -1107,11 +1283,10 @@ export default class OpenSpec extends View {
     step(0, cx);
   }
 
-  async loadTasks(name, context) {
-    const root = this.root, on = this.on;
-    if (!root) return;
-    const text = await readTextFile(`${root}/openspec/changes/${name}/tasks.md`, { on });
-    if (key() !== context || this.open !== name) return;
+  async loadTasks(c, context) {
+    if (!c?.root) return;
+    const text = await readTextFile(`${c.root}/openspec/changes/${c.name}/tasks.md`, { on: this.on });
+    if (key() !== context || this.open !== c.key) return;
     // A re-read that brings a different file withdraws the mark-all arm; an
     // unchanged re-read (an unrelated change's edit waking the watch) does not.
     if (this.marking && text !== this.tasksText) this.marking = null;
@@ -1412,20 +1587,22 @@ export default class OpenSpec extends View {
     });
   }
 
-  pick(name, cx) {
-    const opening = this.open !== name;
-    this.open = opening ? name : null;
+  pick(c, cx) {
+    const opening = this.open !== c.key;
+    this.open = opening ? c.key : null;
+    this.openRoot = opening ? c.root : null;
+    this.openName = opening ? c.name : null;
     this.tasks = [];
     this.tasksText = null;
     this.confirming = null;
     this.marking = null; // a row switch spends the mark-all arm
     // Opening a row also shows it in the open viewer (same repository and
     // machine); folding a row away leaves the viewer where it is.
-    if (opening && this.root) this.requestViewer(name, cx, { root: this.root, on: this.on, openIfNone: false });
+    if (opening && c.root) this.requestViewer(c.name, cx, { root: c.root, on: this.on, openIfNone: false });
     const context = this.context;
     if (this.open) cx.spawn(async (cx) => {
-      try { await this.loadTasks(this.open, context); }
-      catch { if (key() === context && this.open === name) this.tasks = null; }
+      try { await this.loadTasks(c, context); }
+      catch { if (key() === context && this.open === c.key) this.tasks = null; }
       cx.notify();
     });
     cx.notify();
@@ -1433,16 +1610,16 @@ export default class OpenSpec extends View {
 
   // Second click of the "Archive?" chip: run openspec archive <name> --yes
   // (exec has no TTY, so prompts must be skipped), then report by toast.
-  archive(name, cx) {
-    if (this.busy || !this.root) return;
-    const { cwd, on } = location(), context = key();
-    const root = this.root, space = spaces().find((s) => s.active)?.id ?? null;
-    if (!cwd) return;
-    this.busy = name; this.confirming = null;
+  archive(c, cx) {
+    if (this.busy || !c?.root) return;
+    const { on } = location(), context = key();
+    const name = c.name, root = c.root, ckey = c.key;
+    const space = spaces().find((s) => s.active)?.id ?? null;
+    this.busy = ckey; this.confirming = null;
     cx.spawn(async (cx) => {
       let ok = false, detail = "";
       try {
-        const r = await exec("openspec", ["archive", name, "--yes"], { cwd, on });
+        const r = await exec("openspec", ["archive", name, "--yes"], { cwd: root, on });
         ok = r.code === 0;
         detail = ok ? `openspec archive ${name}` : exitDetail(r);
       } catch (e) { detail = thrownDetail(e); }
@@ -1461,7 +1638,9 @@ export default class OpenSpec extends View {
       try { same = key() === context; }
       catch { /* a released view cannot read its context; the report already stands */ }
       if (same) {
-        if (this.open === name) { this.open = null; this.tasks = []; }
+        if (this.open === ckey) {
+          this.open = null; this.openRoot = null; this.openName = null; this.tasks = [];
+        }
         try { this.refresh(cx); } catch { /* the view may be gone; the report already stands */ }
       }
       try { cx.notify(); } catch { /* a released view cannot repaint */ }
@@ -1481,17 +1660,17 @@ export default class OpenSpec extends View {
   // `=` passes it verbatim (probed green). Not the app's `herdr` CLI (no
   // `file` subcommand — its usage error was the first live tick) and not
   // `--on` (herdr-core's local machine registry is empty, so it cannot route
-  // from here); running on the machine needs no registry, and `this.root` is a
-  // valid cwd there. A pair that changes nothing means the file already holds
+  // from here); running on the machine needs no registry, and the row's root
+  // is a valid cwd there. A pair that changes nothing means the file already holds
   // the asked state, so it is accepted as it stands, as the local write would
   // be.
   // Returns the settled text to show; throws when it cannot land or verify.
-  async writeFlip(path, body, next, line, task, to) {
+  async writeFlip(root, path, body, next, line, task, to) {
     if (!this.on) { await writeTextFile(path, next, body); return next; }
     const pair = flipPair(body, line, next);
     if (pair === null) throw "the task changed under the click";
     if (pair.old === pair.neu) return body;
-    const r = await exec("herdr-core", ["file", "edit", path, `--old=${pair.old}`, `--new=${pair.neu}`], { cwd: this.root, on: this.on });
+    const r = await exec("herdr-core", ["file", "edit", path, `--old=${pair.old}`, `--new=${pair.neu}`], { cwd: root, on: this.on });
     if (r.code !== 0) throw exitDetail(r);
     const reread = await readTextFile(path, { on: this.on });
     if (reread === null) throw "tasks.md is gone";
@@ -1509,12 +1688,12 @@ export default class OpenSpec extends View {
   // pre-checked unique (flipPairs), and the re-read must hold every changed
   // line's ticked text. Returns the settled text to show; throws when it
   // cannot land or verify.
-  async writeFlips(path, body, next) {
+  async writeFlips(root, path, body, next) {
     if (!this.on) { await writeTextFile(path, next, body); return next; }
     const pairs = flipPairs(body, next);
     if (!pairs.length) return body;
     const r = await exec("herdr-core", ["file", "edit", path,
-      ...pairs.flatMap((p) => [`--old=${p.old}`, `--new=${p.neu}`])], { cwd: this.root, on: this.on });
+      ...pairs.flatMap((p) => [`--old=${p.old}`, `--new=${p.neu}`])], { cwd: root, on: this.on });
     if (r.code !== 0) throw exitDetail(r);
     const reread = await readTextFile(path, { on: this.on });
     if (reread === null) throw "tasks.md is gone";
@@ -1530,17 +1709,17 @@ export default class OpenSpec extends View {
   // machine it is the CLI's exact-text edit, read–edit–verify (writeFlip). A
   // rejection (an agent edited first) re-reads and tries once more, and
   // anything that still fails shows the file's real state and toasts.
-  toggle(row, name, cx) {
-    if (!this.root || this.toggling || typeof row.line !== "number") return;
-    const path = `${this.root}/openspec/changes/${name}/tasks.md`;
-    const line = row.line, task = row.text, to = !row.done, context = key();
-    row.done = to; this.toggling = name; cx.notify();
+  toggle(row, c, cx) {
+    if (!c?.root || this.toggling || typeof row.line !== "number") return;
+    const path = `${c.root}/openspec/changes/${c.name}/tasks.md`;
+    const line = row.line, task = row.text, to = !row.done, context = key(), ckey = c.key;
+    row.done = to; this.toggling = ckey; cx.notify();
     cx.spawn(async (cx) => {
       let body = this.tasksText, settled = null, why = "";
       try {
         let next = body === null ? null : toggled(body, line, task, to);
         if (next !== null) {
-          try { settled = await this.writeFlip(path, body, next, line, task, to); }
+          try { settled = await this.writeFlip(c.root, path, body, next, line, task, to); }
           catch { next = null; } // stale snapshot: fall through to a re-read
         }
         if (settled === null) {
@@ -1549,11 +1728,11 @@ export default class OpenSpec extends View {
           else {
             next = toggled(body, line, task, to);
             if (next === null) { why = "the task changed under the click"; settled = body; }
-            else { settled = await this.writeFlip(path, body, next, line, task, to); }
+            else { settled = await this.writeFlip(c.root, path, body, next, line, task, to); }
           }
         }
       } catch (e) { why = String(e); if (settled === null) settled = body; }
-      if (key() === context && this.open === name && settled !== null) {
+      if (key() === context && this.open === ckey && settled !== null) {
         this.tasksText = settled; this.tasks = taskRows(settled);
       }
       this.toggling = null;
@@ -1572,26 +1751,27 @@ export default class OpenSpec extends View {
   // compare-and-swap on the snapshot loadTasks read; on a remote machine it is
   // one all-or-none `herdr-core file edit` (writeFlips). The label's arm
   // (`marking`/`markUntil`) is spent here, so it never survives its own write.
-  markAll(name, cx) {
-    if (!this.root || this.toggling || this.open !== name || typeof this.tasksText !== "string") return;
+  markAll(c, cx) {
+    if (!c?.root || this.toggling || this.open !== c.key || typeof this.tasksText !== "string") return;
+    const ckey = c.key;
     this.marking = null;
     if (Array.isArray(this.tasks)) for (const r of this.tasks) if (!r.section && !r.done) r.done = true;
-    this.toggling = name;
-    const path = `${this.root}/openspec/changes/${name}/tasks.md`;
+    this.toggling = ckey;
+    const path = `${c.root}/openspec/changes/${c.name}/tasks.md`;
     const context = key();
     cx.notify();
     cx.spawn(async (cx) => {
       let body = this.tasksText, settled = null, why = "";
       try {
-        try { settled = await this.writeFlips(path, body, markedAll(body)); }
+        try { settled = await this.writeFlips(c.root, path, body, markedAll(body)); }
         catch { settled = null; } // stale snapshot: fall through to a re-read
         if (settled === null) {
           body = await readTextFile(path, { on: this.on });
           if (body === null) why = "tasks.md is gone";
-          else settled = await this.writeFlips(path, body, markedAll(body));
+          else settled = await this.writeFlips(c.root, path, body, markedAll(body));
         }
       } catch (e) { why = String(e); if (settled === null) settled = body; }
-      if (key() === context && this.open === name && settled !== null) {
+      if (key() === context && this.open === ckey && settled !== null) {
         this.tasksText = settled; this.tasks = taskRows(settled);
       }
       this.toggling = null;
@@ -1601,64 +1781,34 @@ export default class OpenSpec extends View {
     });
   }
 
-  // The card a row shows instead of the shell's one-line tooltip: the panel's
-  // own Tokyo Night surface, capped to a readable width so a long line wraps
-  // rather than running off the screen, naming the row's state above the full
-  // text. `trigger` is the whole row — its hover background and click area
-  // included — and the card keeps an id apart from the row's. Task rows also
-  // pass `onToggle` and get a full-width button under the text that flips the
-  // task through the same toggle() the row clicks — "✓ Mark done" on an open
-  // task, "↺ Reopen" on a done one. The card has no close API, so it stays
-  // open across the flip and just re-renders to the new state. Section cards
-  // pass nothing and stay buttonless.
-  hoverCard(id, trigger, state, text, onToggle) {
-    const label = state === "done" ? "✓ done" : state === "open" ? "○ open" : "section";
-    const tone = state === "done" ? NIGHT_MD.done : state === "open" ? NIGHT.muted : NIGHT.faint;
-    return HoverCard.new(id).trigger(trigger.w_full())
-      .content(v_flex().w(340).p(10).gap(6).rounded(8).bg(NIGHT.bg)
-        .border_1().border_color(NIGHT.border)
-        .child(div().text_size(10).font_semibold().text_color(tone).child(label))
-        .child(div().min_w(0).text_size(12.5).line_height("18px").text_color(NIGHT.fg).child(text))
-        .when(onToggle, (e) => e.child(h_flex().id(`${id}-toggle`).w_full().h(24).flex_none().items_center()
-          .justify_center().rounded(6).border_1().border_color(NIGHT.border).text_size(10).font_semibold()
-          .cursor_pointer().text_color(state === "done" ? NIGHT.muted : NIGHT_MD.done)
-          .hover((s) => s.bg(NIGHT.bgAlt).text_color(NIGHT.fg))
-          .on_click((_e, cx) => onToggle(cx))
-          .child(state === "done" ? "↺ Reopen" : "✓ Mark done"))))
-      .anchor("top_left").open_delay(400).close_delay(250);
-  }
-
-  // A task row: ✓ done / ○ open, wrapping to the entry's whole text. A rest on
-  // the row (or on a section heading, which still truncates) shows the hover
-  // card; done tasks read green when their change is complete; rows click to
-  // tick (toggle) in any space.
-  taskLine(row, t, name, complete) {
+  // A task row: ✓ done / ○ open, wrapping to the entry's whole text. Done
+  // tasks read green when their change is complete; rows click to tick
+  // (toggle) in any space. A section heading is one line, truncated.
+  taskLine(row, t, c, complete) {
     const { section, done, full, line } = row;
+    const wt = c.wt;
     if (section) {
-      const head = div().id(`os-sec-${section}`).h(20).flex_none().flex().items_center().px(8).truncate()
+      return div().id(`os-sec-${wt}-${section}`).h(20).flex_none().flex().items_center().px(8).truncate()
         .text_size(10).font_semibold().text_color(t.dim).child(section);
-      return Boolean(section) ? this.hoverCard(`os-sec-card-${section}`, head, "section", section) : head;
     }
-    const item = h_flex().id(`os-task-${line}`).min_h(18).flex_none().px(8).gap(7).items_start()
+    return h_flex().id(`os-task-${wt}-${line}`).min_h(18).flex_none().px(8).gap(7).items_start()
       .child(div().w(11).flex_none().text_size(11).line_height("18px")
         .text_color(done ? green(t) : t.dim).child(done ? "✓" : "○"))
       .child(div().flex_1().min_w(0).text_size(11).line_height("18px")
         .text_color(done ? (complete ? green(t) : t.dim) : t.foreground).child(full || " "))
       .cursor_pointer().hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => this.toggle(row, name, cx));
-    return Boolean(full) ? this.hoverCard(`os-task-card-${line}`, item, done ? "done" : "open", full,
-      (cx) => this.toggle(row, name, cx)) : item;
+      .on_click((_e, cx) => this.toggle(row, c, cx));
   }
 
   row(c, t) {
-    const open = this.open === c.name, complete = c.total > 0 && c.done >= c.total;
-    const confirming = this.confirming === c.name && Date.now() < this.confirmUntil;
+    const open = this.open === c.key, complete = c.total > 0 && c.done >= c.total;
+    const confirming = this.confirming === c.key && Date.now() < this.confirmUntil;
     const state = stateOf(c), remaining = c.total - c.done;
     const chip = (label, color) => div().px(5).rounded(4).border_1().border_color(t.border).text_size(10).text_color(color).flex_none().child(label);
     const barColor = state === "complete" ? green(t) : state === "nearly" ? t.accent : t.working;
     return v_flex().flex_none()
-      .child(h_flex().id(`chg-${c.name}`).h(38).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
-        .when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(c.name, cx))
+      .child(h_flex().id(`chg-${c.wt}-${c.name}`).h(38).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
+        .when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(c, cx))
         .on_mouse_down("right", (e, cx) => {
           cx.stop_propagation();
           this.openRowMenu(c, e.position, cx);
@@ -1671,14 +1821,14 @@ export default class OpenSpec extends View {
         .when(state === "draft", (e) => e.child(chip("no tasks", t.dim)))
         .when(state === "progress" && Boolean(c.status) && c.status !== "in-progress", (e) => e.child(chip(c.status, t.muted)))
         .when(Boolean(ago(c.at)), (e) => e.child(div().w(64).text_right().text_size(11).text_color(t.dim).flex_none().truncate().child(ago(c.at))))
-        .when(this.busy === c.name, (e) => e.child(svg("mods/workspace-chrome/spinner.svg").size(13).flex_none().text_color(t.dim).spin(900)))
+        .when(this.busy === c.key, (e) => e.child(svg("mods/workspace-chrome/spinner.svg").size(13).flex_none().text_color(t.dim).spin(900)))
         .when(showArchive(c, this), (e) => e.child(confirming
-          ? h_flex().id(`arch-${c.name}`).h(22).px(7).flex_none().items_center().rounded(5).bg(`${t.ansi1}22`).text_color(t.ansi1).text_size(10).cursor_pointer()
+          ? h_flex().id(`arch-${c.wt}-${c.name}`).h(22).px(7).flex_none().items_center().rounded(5).bg(`${t.ansi1}22`).text_color(t.ansi1).text_size(10).cursor_pointer()
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-            .on_click((_e, cx) => this.archive(c.name, cx)).child("Archive?")
-          : div().id(`arch-${c.name}`).size(22).flex_none().flex().items_center().justify_center().rounded(5)
+            .on_click((_e, cx) => this.archive(c, cx)).child("Archive?")
+          : div().id(`arch-${c.wt}-${c.name}`).size(22).flex_none().flex().items_center().justify_center().rounded(5)
             .text_color(complete ? t.muted : t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-            .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.confirming = c.name; this.confirmUntil = Date.now() + 6000; cx.notify(); })
+            .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); this.confirming = c.key; this.confirmUntil = Date.now() + 6000; cx.notify(); })
             .child(svg("mods/openspec/archive.svg").size(13)))))
       .when(c.total > 0, (e) => e.child(h_flex().h(3).mx(8).mt(3).mb(2).rounded(2).bg(t.raised).overflow_hidden()
         .child(div().h_full().rounded(2).bg(barColor).w(`${Math.round(100 * c.done / c.total)}%`))))
@@ -1694,24 +1844,57 @@ export default class OpenSpec extends View {
           // so the bar also stays up while this change's write is in flight —
           // otherwise the spinner would never be rendered.
           const openCount = this.tasks.filter((r) => !r.section && !r.done).length;
-          const armed = this.marking === c.name && Date.now() < this.markUntil;
-          const inFlight = this.toggling === c.name;
+          const armed = this.marking === c.key && Date.now() < this.markUntil;
+          const inFlight = this.toggling === c.key;
           return el
-            .when(openCount > 0 || this.toggling === c.name, (el2) => el2.child(h_flex().w_full().h(18).flex_none().px(8).items_center().justify_end()
-              .when(inFlight, (bar) => bar.child(div().id(`mark-${c.name}`).flex().items_center()
+            .when(openCount > 0 || this.toggling === c.key, (el2) => el2.child(h_flex().w_full().h(18).flex_none().px(8).items_center().justify_end()
+              .when(inFlight, (bar) => bar.child(div().id(`mark-${c.wt}-${c.name}`).flex().items_center()
                 .child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.dim).spin(900))))
-              .when(!inFlight && armed, (bar) => bar.child(div().id(`mark-${c.name}`).h(18).px(6).flex().flex_none().items_center().rounded(4)
+              .when(!inFlight && armed, (bar) => bar.child(div().id(`mark-${c.wt}-${c.name}`).h(18).px(6).flex().flex_none().items_center().rounded(4)
                 .bg(`${t.ansi1}22`).text_color(t.ansi1).text_size(10).cursor_pointer()
-                .on_click((_e, cx) => this.markAll(c.name, cx)).child(`Mark all ${openCount}?`)))
-              .when(!inFlight && !armed, (bar) => bar.child(div().id(`mark-${c.name}`).h(18).px(6).flex().flex_none().items_center().rounded(4)
+                .on_click((_e, cx) => this.markAll(c, cx)).child(`Mark all ${openCount}?`)))
+              .when(!inFlight && !armed, (bar) => bar.child(div().id(`mark-${c.wt}-${c.name}`).h(18).px(6).flex().flex_none().items_center().rounded(4)
                 .text_color(t.dim).text_size(10).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-                .on_click((_e, cx) => { this.marking = c.name; this.markUntil = Date.now() + 6000; cx.notify(); })
+                .on_click((_e, cx) => { this.marking = c.key; this.markUntil = Date.now() + 6000; cx.notify(); })
                 .child(`Mark all ${openCount} done`)))))
-            .children(rows.map((r) => this.taskLine(r, t, c.name, complete)))
+            .children(rows.map((r) => this.taskLine(r, t, c, complete)))
             .when(this.tasks.length > 120, (el2) => el2.child(div().px(8).py(2).text_size(10).text_color(t.dim)
               .child(`+ ${this.tasks.length - 120} more in tasks.md`)))
             .when(!this.tasks.length, (el2) => el2.child(div().px(8).py(3).text_size(11).text_color(t.dim).child("No tasks yet")));
         })));
+  }
+
+  // One section's rows. The state sort groups rows inside the section, so each
+  // section carries its own state headers and the worktree header stays above
+  // them. The id carries the worktree id for the same reason row ids do.
+  sectionRows(rows, t) {
+    if (this.sort !== "state") return rows.map((c) => this.row(c, t));
+    let last = null;
+    return rows.flatMap((c) => {
+      const st = stateOf(c);
+      if (st === last) return [this.row(c, t)];
+      last = st;
+      const meta = STATES.find((s) => s.id === st), count = rows.filter((r) => stateOf(r) === st).length;
+      return [div().id(`os-group-${c.wt}-${st}`).h(22).flex_none().flex().items_center().px(8).gap(6).truncate()
+        .text_size(10).font_semibold().text_color(st === "complete" ? green(t) : t[meta.color]).child(meta.label)
+        .child(div().text_color(t.dim).child(String(count))), this.row(c, t)];
+    });
+  }
+
+  // A worktree section header: the branch label (or `detached: <folder>`), the
+  // panel's own section marked, and the section's visible change count and
+  // done/total tasks. An error section's body carries its message instead, so
+  // its header shows no counts.
+  sectionHead(s, t) {
+    const rows = s.rows ?? [];
+    const done = rows.reduce((n, c) => n + c.done, 0), total = rows.reduce((n, c) => n + c.total, 0);
+    return h_flex().id(`os-wt-${s.wt}`).h(22).flex_none().flex().items_center().px(8).gap(6).truncate()
+      .text_size(10).font_semibold().text_color(t.accent)
+      .child(div().flex_none().child(`⎇ ${s.label}`))
+      .when(s.own, (e) => e.child(div().flex_none().text_color(t.dim).child("· this worktree")))
+      .child(div().flex_1())
+      .when(!s.error, (e) => e.child(div().flex_none().text_color(t.dim)
+        .child(`${rows.length} change${rows.length === 1 ? "" : "s"}${total > 0 ? ` · ${done}/${total}` : ""}`)));
   }
 
   // The archive-failure dialog: a small Tokyo Night card naming the change and
@@ -1856,12 +2039,12 @@ export default class OpenSpec extends View {
   // failed or slow read shows the full static set, and the popup opens after
   // the read so items neither appear nor vanish under the pointer.
   openRowMenu(c, pos, cx) {
-    const root = this.root, on = this.on;
+    const root = c.root, on = this.on;
     const space = spaces().find((s) => s.active)?.id ?? null;
     const geo = pos && typeof pos.x === "number" && typeof pos.y === "number" ? { at: { x: pos.x, y: pos.y } } : {};
     const open = (items, height) => openOverlay({ mod: "openspec", kind: "popup", ...geo, width: 200, height,
       props: { menuFor: c.name, root, on, space, panel: this.panelId, items } });
-    if (!this.root) {
+    if (!root) {
       const { items, height } = rowMenuItems(null, c);
       open(items, height);
       return;
@@ -2068,10 +2251,24 @@ export default class OpenSpec extends View {
     if (typeof props()?.file === "string") return this.changeView();
     if (props()?.archiveFailed && typeof props().archiveFailed === "object") return this.failureView();
     if (key() !== this.context) this.refresh(cx);
-    const rows = visible(this);
+    const sections = visibleSections(this);
+    const rows = sections.flatMap((s) => s.rows);
     const done = rows.reduce((n, c) => n + c.done, 0), total = rows.reduce((n, c) => n + c.total, 0);
     const filtering = Boolean((this.filter || "").trim());
     const where = this.root ? `${this.on ? `${this.on}: ` : ""}${this.root}` : null;
+    // Headers (and the divider between sections) only when a linked worktree
+    // renders. With one worktree the list is exactly its old self.
+    const showHeads = sections.some((s) => !s.own);
+    const ownHasChanges = this.ownHasChanges;
+    const body = showHeads
+      ? sections.flatMap((s, i) => [
+        ...(i > 0 ? [div().h(1).mx(6).my(3).flex_none().bg(t.border)] : []),
+        this.sectionHead(s, t),
+        ...(s.error
+          ? [div().px(8).py(3).text_size(11).text_color(t.dim).child(s.error)]
+          : this.sectionRows(s.rows, t)),
+      ])
+      : this.sectionRows(rows, t);
     return v_flex().id("openspec").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .track_focus(this.handle)
@@ -2106,7 +2303,7 @@ export default class OpenSpec extends View {
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => this.openCommands(cx))
           .child(div().min_w(0).truncate().child("Commands ▾"))))
-        .when(this.root && this.changes.length > 0, (e) => e.child(h_flex().id("openspec-bulk-archive").h(24).px(8).gap(5).flex_none().flex().items_center().rounded(7).border_1().border_color(t.border)
+        .when(ownHasChanges, (e) => e.child(h_flex().id("openspec-bulk-archive").h(24).px(8).gap(5).flex_none().flex().items_center().rounded(7).border_1().border_color(t.border)
           .text_size(11).text_color(t.muted).cursor_pointer()
           .hover((s) => s.text_color(t.foreground))
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -2125,17 +2322,13 @@ export default class OpenSpec extends View {
           })
           .child(`↕ ${SORTS.find((s) => s.id === this.sort)?.label ?? "recent"}`)))
       .child(v_flex().id("openspec-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(2)
-        .children((this.sort === "state" ? (() => { let last = null; return rows.map((c) => {
-          const st = stateOf(c);
-          if (st === last) return this.row(c, t);
-          last = st;
-          const meta = STATES.find((s) => s.id === st), count = rows.filter((r) => stateOf(r) === st).length;
-          return [div().id(`os-group-${st}`).h(22).flex_none().flex().items_center().px(8).gap(6).truncate()
-            .text_size(10).font_semibold().text_color(st === "complete" ? green(t) : t[meta.color]).child(meta.label).child(div().text_color(t.dim).child(String(count))), this.row(c, t)];
-        }); })() : rows.map((c) => this.row(c, t))).flat())
-        .when(!rows.length, (e) => e.child(div().p(8).text_color(t.dim)
+        .children(body)
+        .when(!sections.length, (e) => e.child(div().p(8).text_color(t.dim)
           .child(filtering && this.changes.length ? `No changes match “${this.filter.trim()}”`
-            : this.error || (this.loading || !this.context ? "Loading changes…" : this.root ? "No active changes" : "No folder")))))
+            : this.error || (this.loading || !this.context ? "Loading changes…"
+              : !this.root ? "No folder"
+                : this.ownNone && !this.changes.length ? "No OpenSpec here — run `openspec init`"
+                  : "No active changes")))))
       .when(Boolean(where), (e) => e.child(h_flex().flex_none().h(26).px(12).items_center().border_t(1).border_color(t.border)
         .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(where))));
   }
