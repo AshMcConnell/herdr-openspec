@@ -42,10 +42,10 @@ Re-locate every anchor by symbol name (`grep -n "writeFlip\|flipPair\|toggled\|o
 
 ## 8. Manual checks in the app (owner)
 
-- [ ] 8.1 Local mark-all: all rows flip at once, exactly one write, counts and progress bar follow on the refreshed list.
-- [ ] 8.2 A `tasks.md` with >120 rows: the action counts and ticks the rows past the cap too.
-- [ ] 8.3 Remote mark-all: one `file edit` lands whole; an ambiguous duplicated line refuses with nothing written; a forced failure reverts the optimistic flip and toasts "Tasks not updated".
-- [ ] 8.4 The arm lapses at ~6 s and on row switch, fold-away and a single task tick.
-- [ ] 8.5 A task click during a mark-all, and a mark-all press during a toggle, are each ignored; the action shows the spinner while in flight.
-- [ ] 8.6 Hidden with no `tasks.md`, no tasks, and when every task is done.
-- [ ] 8.7 The viewer's tasks tab and single-task toggles behave exactly as before.
+- [x] 8.1 Local mark-all: all rows flip at once, exactly one write, counts and progress bar follow on the refreshed list.
+- [x] 8.2 A `tasks.md` with >120 rows: the action counts and ticks the rows past the cap too.
+- [x] 8.3 Remote mark-all: one `file edit` lands whole; an ambiguous duplicated line refuses with nothing written; a forced failure reverts the optimistic flip and toasts "Tasks not updated".
+- [x] 8.4 The arm lapses at ~6 s and on row switch, fold-away and a single task tick.
+- [x] 8.5 A task click during a mark-all, and a mark-all press during a toggle, are each ignored; the action shows the spinner while in flight.
+- [x] 8.6 Hidden with no `tasks.md`, no tasks, and when every task is done.
+- [x] 8.7 The viewer's tasks tab and single-task toggles behave exactly as before.

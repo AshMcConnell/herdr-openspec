@@ -31,11 +31,11 @@ Re-locate every anchor by symbol name (`grep -n "listSpecs\|this.confirming\|par
 
 ## 6. Manual checks in the app (owner)
 
-- [ ] 6.1 A `.draft` folder under `openspec/changes/` is absent from the panel and from every count.
-- [ ] 6.2 A `.backup/spec.md` in a change leaves the specs tab showing only real capabilities.
-- [ ] 6.3 A dots-only repository shows "No active changes" and no error.
-- [ ] 6.4 A dot-only `specs/` shows no specs tab.
-- [ ] 6.5 Non-dot entries render exactly as before.
-- [ ] 6.6 The same in a remote space.
-- [ ] 6.7 A viewer pane opened directly on a dot change's `proposal.md` still renders.
-- [ ] 6.8 The watch still refreshes when a dot entry changes.
+- [x] 6.1 A `.draft` folder under `openspec/changes/` is absent from the panel and from every count.
+- [x] 6.2 A `.backup/spec.md` in a change leaves the specs tab showing only real capabilities.
+- [x] 6.3 A dots-only repository shows "No active changes" and no error.
+- [x] 6.4 A dot-only `specs/` shows no specs tab.
+- [x] 6.5 Non-dot entries render exactly as before.
+- [x] 6.6 The same in a remote space.
+- [x] 6.7 A viewer pane opened directly on a dot change's `proposal.md` still renders.
+- [x] 6.8 The watch still refreshes when a dot entry changes.

@@ -43,15 +43,15 @@
 
 ## 7. Manual checks in the app (owner)
 
-- [ ] 7.1 Right-click a complete change: Continue, Apply, Verify and Sync specs hidden, Archive using AI shown; popup opens at the click and is shorter than the full set.
-- [ ] 7.2 Right-click an artifact-incomplete change: the full five-item command set under the divider.
-- [ ] 7.3 Right-click a change on a remote machine: the status read runs on its machine and the menu opens at the click point.
-- [ ] 7.4 Pick Continue with a selected same-repository agent: the command lands in that agent's terminal and the toast names it.
-- [ ] 7.5 Pick Continue with a selected wrong-repository agent: no send; a new tab opens in the panel's repository with the command as first message.
-- [ ] 7.6 With no agent installed, pick Continue: the full `/opsx-continue <name>` is on the clipboard with the Copied toast.
-- [ ] 7.7 With zero active changes, the Commands button is shown; New change hands bare `/opsx-propose` and the command prompts for what to build.
-- [ ] 7.8 Double-press refusal across sources: a row pick while a bulk hand-off is in flight does nothing, and bulk's spinner shows only for bulk.
-- [ ] 7.9 Bulk regression: toasts unchanged, the failure dialog and its Archive using AI unchanged.
+- [x] 7.1 Right-click a complete change: Continue, Apply, Verify and Sync specs hidden, Archive using AI shown; popup opens at the click and is shorter than the full set.
+- [x] 7.2 Right-click an artifact-incomplete change: the full five-item command set under the divider.
+- [x] 7.3 Right-click a change on a remote machine: the status read runs on its machine and the menu opens at the click point.
+- [x] 7.4 Pick Continue with a selected same-repository agent: the command lands in that agent's terminal and the toast names it.
+- [x] 7.5 Pick Continue with a selected wrong-repository agent: no send; a new tab opens in the panel's repository with the command as first message.
+- [x] 7.6 With no agent installed, pick Continue: the full `/opsx-continue <name>` is on the clipboard with the Copied toast.
+- [x] 7.7 With zero active changes, the Commands button is shown; New change hands bare `/opsx-propose` and the command prompts for what to build.
+- [x] 7.8 Double-press refusal across sources: a row pick while a bulk hand-off is in flight does nothing, and bulk's spinner shows only for bulk.
+- [x] 7.9 Bulk regression: toasts unchanged, the failure dialog and its Archive using AI unchanged.
 
 ## 8. Review pass
 
