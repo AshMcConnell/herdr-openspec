@@ -967,6 +967,25 @@ async function readList(root, on) {
   };
 }
 
+// The change names archived in one worktree, from the
+// `openspec/changes/archive/<date>-<name>` folder names. Only the panel's own
+// worktree is read: its archive is the record of what that branch has
+// finished. A missing folder or a failed read is simply no archive.
+async function readArchive(root, on) {
+  const dir = `${root}/openspec/changes/archive`;
+  let found;
+  try { found = await exec("find", [dir, "-mindepth", "1", "-maxdepth", "1", "-type", "d"], { cwd: root, on }); }
+  catch { return []; }
+  if (found.code !== 0) return [];
+  const names = new Set();
+  for (const line of `${found.stdout ?? ""}`.split("\n")) {
+    const base = line.trim().split("/").filter(Boolean).pop();
+    if (!base) continue;
+    names.add(base.replace(/^\d{4}-\d{2}-\d{2}-/, ""));
+  }
+  return [...names];
+}
+
 export default class OpenSpec extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
@@ -1136,7 +1155,10 @@ export default class OpenSpec extends View {
           .sort((a, b) => worktreeLabel(a).localeCompare(worktreeLabel(b)));
         // The own listing is part of the same parallel batch as the linked
         // ones, so one refresh costs roughly the slowest worktree.
-        const reads = await Promise.all([root, ...linked.map((w) => w.path)].map((r) => readList(r, on)));
+        const [reads, archived] = await Promise.all([
+          Promise.all([root, ...linked.map((w) => w.path)].map((r) => readList(r, on))),
+          readArchive(root, on),
+        ]);
         if (key() !== context) return;
         const ownRead = reads[0];
         // Any other own failure would fail in every linked worktree too, so it
@@ -1161,6 +1183,14 @@ export default class OpenSpec extends View {
             changes: read.changes.map((c) => row(c, w.path, wt)), error: null });
         });
         const ownHasChanges = sections[0].changes.length > 0;
+        // A branch cut before a change was archived keeps the change's old
+        // active folder, so `openspec list` there still calls it active. The
+        // own worktree's archive is the record that it is finished, so a
+        // linked copy of that name is a stale leftover, not live work.
+        const ownArchived = new Set(archived);
+        for (const s of sections) {
+          if (!s.own) s.changes = s.changes.filter((c) => !ownArchived.has(c.name));
+        }
         // One row per name (D4): a completed change merges into a stacked
         // branch and both keep a copy, while the main worktree keeps a stale
         // one, so every copy would repeat the name and the stale 0/N copy

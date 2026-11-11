@@ -61,8 +61,10 @@ does not change that repository; it stays on the last terminal you focused.
   A change that exists in several worktrees — a completed copy merged into a
   stacked branch, or a stale copy in the main worktree — shows once, in the
   most complete copy's section (the freshest copy on a tie), and the other
-  copies are hidden. Every row acts in its own worktree — expanding its tasks,
-  ticking a box, archiving it, its row menu and its viewer.
+  copies are hidden. A linked worktree's active copy of a name the panel's
+  own worktree has archived is a stale leftover from a branch cut before the
+  archive, and is hidden too. Every row acts in its own worktree — expanding
+  its tasks, ticking a box, archiving it, its row menu and its viewer.
 - **One row per active change**: name, progress bar, `done/total` tasks,
   and when the change was last touched. Rows sort most recent first,
   as `openspec list` does.
@@ -219,7 +221,9 @@ chip — in the row's own worktree, so a linked checkout is archived there and
 the panel's own tree is untouched. One `git rev-parse --show-toplevel` per
 refresh finds the repository root, and one `git worktree list --porcelain` per
 refresh finds the linked worktrees; git is only read, and the panel never
-creates, removes, prunes or locks a worktree. `tasks.md` is read with Herdr's
+creates, removes, prunes or locks a worktree. One `find` under the own
+worktree's `openspec/changes/archive/` per refresh reads archive folder names
+only, to hide stale copies of finished changes. `tasks.md` is read with Herdr's
 file reader, on the pane's machine for remote spaces. Ticking a task is a file
 write, not a command. On this machine `writeTextFile` replaces that change's
 `tasks.md` only if it still matches what the panel read (a lost race rejects
@@ -271,6 +275,11 @@ finds its toast, through Herdr's shared values (`openspec.viewers`,
   in that copy's section; the other copies are not listed or counted. An edit
   made in a hidden copy appears only when it becomes the shown copy, or on the
   next poll.
+- **Archived copies are hidden** — the panel reads its own worktree's
+  `openspec/changes/archive/` folder names on every refresh, and a linked
+  worktree's active copy of an archived name is left out. A name still active
+  in the panel's own worktree is never hidden, and a missing archive hides
+  nothing.
 - **Bulk archive stays with the panel's own worktree** — the button appears
   only when that worktree has a change, and it never archives a linked
   worktree's change. Each row's archive acts on its own worktree, and there

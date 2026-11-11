@@ -7,8 +7,9 @@ repository are listed too — the panel's own worktree first, then each linked
 checkout under a `⎇ <branch>` header with its own change count and task
 progress, and every row acts in the worktree it came from. A change name that
 several worktrees hold shows once — the most complete copy, then the freshest
-— so a merged or stale duplicate does not repeat the row. A toolbar under
-the header has a
+— so a merged or stale duplicate does not repeat the row; a linked worktree's
+stale copy of a change archived on the panel's own branch is hidden too. A
+toolbar under the header has a
 filter box (change-name substring; `Esc` or × clears it) and a sort button
 cycling recent → A–Z → % done → state (remembered in the panel's
 `localStorage` under `"sort"`); the header totals follow the filtered set.
@@ -98,6 +99,9 @@ It shows itself four ways:
 - `git worktree list --porcelain` on every refresh, to find the linked
   worktrees. It is read-only: the mod never creates, removes, prunes or locks
   one.
+- `find <repo>/openspec/changes/archive -mindepth 1 -maxdepth 1 -type d` on
+  every refresh, reading the own worktree's archive folder names so a linked
+  worktree's stale copies of finished changes are hidden.
 - `openspec status --change <name> --json` before a row's menu opens, in that
   row's worktree.
 - `openspec archive <name> --yes` when the archive chip is confirmed, with the
