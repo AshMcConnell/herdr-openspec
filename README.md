@@ -158,11 +158,12 @@ github.com/AshMcConnell/herdr-openspec"*. It reads
 [RECIPE.md](RECIPE.md) and the files, copies `mods/openspec/` into
 `~/.config/herdr-app/mods/`, and checks it.
 
-Or by hand:
+Or run the installer from a clone — it copies `mods/openspec/` into
+`~/.config/herdr-app/mods/` and checks it:
 
 ```sh
 git clone https://github.com/AshMcConnell/herdr-openspec
-cp -R herdr-openspec/mods/openspec ~/.config/herdr-app/mods/
+cd herdr-openspec && ./install.sh
 ```
 
 Herdr runs its own copy of the mod from `~/.config/herdr-app/mods/`, so a
